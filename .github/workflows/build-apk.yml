@@ -27,10 +27,7 @@ jobs:
           java-version: '17'
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
-        with:
-          sdk-platform-version: '34'
-          sdk-build-tools-version: '34.0.0'
-      - name: Setup Gradle
+      - name: Setup Gradle 8.7
         uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: '8.7'
@@ -53,7 +50,7 @@ jobs:
           printf 'storePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' "$KS_PASS" "$KEY_ALIAS" "$KEY_PASS" > keystore.properties
 
       - name: Build release APK
-        run: gradle --no-daemon assembleRelease
+        run: gradle --no-daemon --stacktrace assembleRelease
 
       - name: Locate APK
         id: apk
