@@ -29,8 +29,8 @@ Tidak perlu install apa-apa di komputer-mu — APK dibangun otomatis di server G
    ```
    (atau cukup drag-and-drop file ke web GitHub).
 3. Buka tab **Actions** di repo. Workflow "Build APK" berjalan otomatis (~3-5 menit).
-4. Klik run terbaru → scroll ke bawah → **download artifact** `app-debug-apk`.
-5. Unzip artifact tersebut → file **`app-debug.apk`** siap diinstall di HP.
+4. Klik run terbaru → scroll ke bawah → **download artifact** `app-release-apk`.
+5. Unzip artifact tersebut → file **`app-release.apk`** siap diinstall di HP.
 
 ### Opsi B — Android Studio
 1. Install **Android Studio** (Arctic Fox atau lebih baru) + **JDK 17**.

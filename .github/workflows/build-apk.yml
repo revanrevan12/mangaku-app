@@ -32,6 +32,8 @@ jobs:
           sdk-build-tools-version: '34.0.0'
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.7'
 
       - name: Generate signing keystore
         env:
@@ -51,7 +53,7 @@ jobs:
           printf 'storePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' "$KS_PASS" "$KEY_ALIAS" "$KEY_PASS" > keystore.properties
 
       - name: Build release APK
-        run: gradle assembleRelease
+        run: gradle --no-daemon assembleRelease
 
       - name: Locate APK
         id: apk
