@@ -10,11 +10,11 @@ on:
       version_name:
         description: 'Version name (mis. 1.0.0)'
         required: false
-        default: '1.2.7'
+        default: '1.2.8'
       version_code:
         description: 'Version code (angka)'
         required: false
-        default: '130'
+        default: '131'
       website_url:
         description: 'URL website yang dibungkus WebView'
         required: false
@@ -26,7 +26,7 @@ on:
       release_tag:
         description: 'Tag GitHub Release'
         required: false
-        default: 'v1.2.7-manual'
+        default: 'v1.2.8-manual'
 
 permissions:
   contents: write
@@ -36,7 +36,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.parallel=true -Dorg.gradle.caching=true -Dkotlin.incremental=false -Dorg.gradle.jvmargs=-Xmx4g -XX:+UseParallelGC -Dfile.encoding=UTF-8
+  GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.parallel=false -Dorg.gradle.caching=true -Dorg.gradle.workers.max=2 -Dfile.encoding=UTF-8
+  JAVA_TOOL_OPTIONS: -Xmx3g
 
 jobs:
   build:
@@ -102,7 +103,10 @@ jobs:
             gradle wrapper --gradle-version 8.7 --no-daemon
           fi
           chmod +x gradlew
-          ./gradlew assembleRelease --no-daemon --stacktrace --build-cache --parallel -q
+          ./gradlew assembleRelease             --no-daemon --no-parallel --no-configuration-cache             --max-workers=2 --build-cache --stacktrace --info             || {
+              echo '--- Retry tanpa cache & single worker ---'
+              ./gradlew clean assembleRelease                 --no-daemon --no-parallel --no-build-cache                 --max-workers=1 --stacktrace
+            }
           ls -la app/build/outputs/apk/release/
 
       - name: Sign & package APK
