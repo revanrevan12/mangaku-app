@@ -10,23 +10,23 @@ on:
       version_name:
         description: 'Version name (mis. 1.0.0)'
         required: false
-        default: '1.2.18'
+        default: '1.2.19'
       version_code:
         description: 'Version code (angka)'
         required: false
-        default: '141'
+        default: '142'
       website_url:
         description: 'URL website yang dibungkus WebView'
         required: false
         default: ''
       logo_url:
-        description: 'URL logo website (PNG/JPG) untuk app icon'
+        description: 'URL logo website (PNG) untuk app icon'
         required: false
         default: ''
       release_tag:
         description: 'Tag GitHub Release'
         required: false
-        default: 'v1.2.18-manual'
+        default: 'v1.2.19-manual'
 
 permissions:
   contents: write
@@ -36,13 +36,13 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.parallel=false -Dorg.gradle.caching=true -Dorg.gradle.workers.max=1 -Dfile.encoding=UTF-8
-  JAVA_TOOL_OPTIONS: -Xmx3g
+  GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.parallel=false -Dorg.gradle.workers.max=1 -Dfile.encoding=UTF-8
+  JAVA_TOOL_OPTIONS: -Xmx2g
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -56,10 +56,10 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '20'
 
       - name: Setup JDK 17
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
@@ -89,44 +89,102 @@ jobs:
           test -f app/src/main/AndroidManifest.xml
           test -f app/src/main/res/values/strings.xml
           test -f app/src/main/res/values/themes.xml
-          if [ -f app/src/main/res/drawable-nodpi/ic_launcher.png ]; then
-            # Reject corrupted PNG (was written as UTF-8 text in older generators)
-            if ! head -c 4 app/src/main/res/drawable-nodpi/ic_launcher.png | grep -q $'PNG'; then
-              echo "Corrupt PNG icon — removing"
-              rm -f app/src/main/res/drawable-nodpi/ic_launcher.png
+          test -f app/src/main/res/values/colors.xml
+          # Drop legacy/corrupt/oversized icons
+          find app/src/main/res -name 'ic_launcher.png' -type f 2>/dev/null | while read -r p; do
+            if ! head -c 4 "$p" | grep -q $'\x89PNG'; then
+              echo "Corrupt PNG — removing $p"
+              rm -f "$p"
+            else
+              SZ=$(wc -c < "$p" | tr -d ' ')
+              if [ "$SZ" -gt 409600 ]; then
+                echo "Oversized icon $SZ bytes — removing $p"
+                rm -f "$p"
+              fi
             fi
+          done
+          HAS_PNG=0
+          HAS_XML=0
+          if ls app/src/main/res/mipmap-*/ic_launcher.png >/dev/null 2>&1; then HAS_PNG=1; fi
+          if [ -f app/src/main/res/drawable/ic_launcher.xml ]; then HAS_XML=1; fi
+          if [ "$HAS_PNG" -eq 1 ] && [ "$HAS_XML" -eq 1 ]; then
+            rm -f app/src/main/res/drawable/ic_launcher.xml
+            HAS_XML=0
           fi
-          if [ ! -f app/src/main/res/drawable-nodpi/ic_launcher.png ] && [ ! -f app/src/main/res/drawable/ic_launcher.xml ]; then
+          if [ "$HAS_PNG" -eq 0 ] && [ "$HAS_XML" -eq 0 ]; then
             mkdir -p app/src/main/res/drawable
-            printf '%s
-' '<?xml version="1.0" encoding="utf-8"?>' '<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">' '<path android:fillColor="#E23636" android:pathData="M0,0h108v108h-108z"/>' '<path android:fillColor="#FFFFFF" android:pathData="M30,30h48v48h-48z"/>' '</vector>' > app/src/main/res/drawable/ic_launcher.xml
+            printf '%s\n' \
+              '<?xml version="1.0" encoding="utf-8"?>' \
+              '<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">' \
+              '<path android:fillColor="#E23636" android:pathData="M0,0h108v108h-108z"/>' \
+              '<path android:fillColor="#FFFFFF" android:pathData="M30,30h48v48h-48z"/>' \
+              '</vector>' > app/src/main/res/drawable/ic_launcher.xml
+            sed -i 's|@mipmap/ic_launcher|@drawable/ic_launcher|g' app/src/main/AndroidManifest.xml
           fi
-          test -f app/src/main/res/drawable/ic_launcher.xml || test -f app/src/main/res/drawable-nodpi/ic_launcher.png
+          if [ "$HAS_PNG" -eq 1 ]; then
+            sed -i 's|@drawable/ic_launcher|@mipmap/ic_launcher|g' app/src/main/AndroidManifest.xml
+          fi
+          echo "=== app/build.gradle ==="
+          cat app/build.gradle
+          echo "=== Manifest icon ==="
+          grep -E 'icon|roundIcon' app/src/main/AndroidManifest.xml || true
+          find app/src/main/res -type f | sort
           echo "Project OK"
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v3
         with:
-          gradle-version: '8.9'
+          gradle-version: '8.2'
           cache-read-only: false
-          cache-cleanup: on-success
 
       - name: Build release APK
         run: |
           set -euo pipefail
+          echo "ANDROID_HOME=${ANDROID_HOME:-}"
+          if [ -n "${ANDROID_HOME:-}" ]; then
+            echo "sdk.dir=${ANDROID_HOME}" > local.properties
+          fi
+          cat local.properties 2>/dev/null || echo "(no local.properties)"
           if [ ! -f gradlew ]; then
-            gradle wrapper --gradle-version 8.9 --no-daemon
+            gradle wrapper --gradle-version 8.2 --no-daemon
           fi
           chmod +x gradlew
           set +e
-          ./gradlew assembleRelease             --no-daemon --no-parallel --no-configuration-cache             --max-workers=1 --stacktrace 2>&1 | tee /tmp/gradle-build.log
+          ./gradlew assembleRelease \
+            --no-daemon --no-parallel \
+            --max-workers=1 --stacktrace --warning-mode all 2>&1 | tee /tmp/gradle-build.log
           RC=${PIPESTATUS[0]}
           set -e
           if [ "$RC" -ne 0 ]; then
-            echo '--- Retry: clean assembleRelease (no cache) ---'
+            echo '--- First build failed; extracting errors ---'
+            grep -E 'FAILURE:|error:|What went wrong:|AAPT|Execution failed|Could not' /tmp/gradle-build.log | tail -n 40 || true
+            echo '--- Retry: clean assembleRelease + vector icon ---'
             ./gradlew --stop || true
             rm -rf app/build .gradle
-            ./gradlew clean assembleRelease               --no-daemon --no-parallel --no-build-cache --no-configuration-cache               --max-workers=1 --stacktrace --info
+            if ls app/src/main/res/mipmap-*/ic_launcher.png >/dev/null 2>&1; then
+              echo "Removing PNG icons for retry (possible AAPT issue)"
+              rm -f app/src/main/res/mipmap-*/ic_launcher.png
+              mkdir -p app/src/main/res/drawable
+              printf '%s\n' \
+                '<?xml version="1.0" encoding="utf-8"?>' \
+                '<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">' \
+                '<path android:fillColor="#E23636" android:pathData="M0,0h108v108h-108z"/>' \
+                '<path android:fillColor="#FFFFFF" android:pathData="M30,30h48v48h-48z"/>' \
+                '</vector>' > app/src/main/res/drawable/ic_launcher.xml
+              sed -i 's|@mipmap/ic_launcher|@drawable/ic_launcher|g' app/src/main/AndroidManifest.xml
+            fi
+            set +e
+            ./gradlew clean assembleRelease \
+              --no-daemon --no-parallel --no-build-cache \
+              --max-workers=1 --stacktrace --info 2>&1 | tee /tmp/gradle-build-retry.log
+            RC2=${PIPESTATUS[0]}
+            set -e
+            if [ "$RC2" -ne 0 ]; then
+              echo '--- Retry also failed ---'
+              grep -E 'FAILURE:|error:|What went wrong:|AAPT|Execution failed|Could not' /tmp/gradle-build-retry.log | tail -n 50 || true
+              tail -n 80 /tmp/gradle-build-retry.log || true
+              exit 1
+            fi
           fi
           ls -la app/build/outputs/apk/release/ || {
             echo "Release APK missing"
