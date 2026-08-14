@@ -11,165 +11,308 @@ try {
 }
 
 const env = process.env;
-const appName = env.APP_NAME || cfg.app_name || 'Manga Reader';
-const pkg = cfg.package_id || env.FALLBACK_PACKAGE || 'com.mangareader.app';
-const versionName = env.VERSION_NAME || cfg.version_name || '1.0.0';
-const versionCode = parseInt(env.VERSION_CODE || cfg.version_code || '1', 10) || 1;
-const websiteUrl = env.WEBSITE_URL || cfg.website_url || '';
-const color = cfg.primary_color || '#e23636';
-const minSdk = parseInt(cfg.min_sdk || 21, 10) || 21;
-const targetSdk = parseInt(cfg.target_sdk || 34, 10) || 34;
+const appName = String(env.APP_NAME || cfg.app_name || 'Manga Reader').trim() || 'Manga Reader';
+let pkg = String(cfg.package_id || env.FALLBACK_PACKAGE || 'com.mangareader.app').trim();
+if (!/^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$/.test(pkg)) {
+  console.warn('Invalid package_id, falling back to com.mangareader.app');
+  pkg = 'com.mangareader.app';
+}
+const versionName = String(env.VERSION_NAME || cfg.version_name || '1.0.0').replace(/'/g, '');
+const versionCode = Math.max(1, parseInt(env.VERSION_CODE || cfg.version_code || '1', 10) || 1);
+const websiteUrl = String(env.WEBSITE_URL || cfg.website_url || 'https://example.com').trim();
+let color = String(cfg.primary_color || '#E23636').trim();
+if (!/^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/.test(color)) color = '#E23636';
+const minSdk = Math.max(21, parseInt(cfg.min_sdk || 24, 10) || 24);
+const targetSdk = Math.min(34, Math.max(minSdk, parseInt(cfg.target_sdk || 34, 10) || 34));
+const compileSdk = 34;
 
 const write = (p, content) => {
   fs.mkdirSync(path.dirname(p), { recursive: true });
-  fs.writeFileSync(p, content);
+  const body = String(content);
+  fs.writeFileSync(p, body.endsWith('\n') ? body : body + '\n', 'utf8');
   console.log('wrote', p);
 };
 
+const xmlEscape = (s) =>
+  String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+
 const pkgPath = pkg.split('.').join('/');
+const safeUrl = websiteUrl.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 
-write('settings.gradle', [
-  'pluginManagement {',
-  '  repositories { google(); mavenCentral(); gradlePluginPortal() }',
-  '}',
-  'dependencyResolutionManagement {',
-  '  repositories { google(); mavenCentral() }',
-  '}',
-  "rootProject.name = 'MangaApp'",
-  "include ':app'",
-].join('\n'));
+try {
+  fs.rmSync('app', { recursive: true, force: true });
+} catch {
+  /* ignore */
+}
 
-write('build.gradle', [
-  'plugins {',
-  "  id 'com.android.application' version '8.5.2' apply false",
-  '}',
-].join('\n'));
+write(
+  'settings.gradle',
+  [
+    'pluginManagement {',
+    '    repositories {',
+    '        google()',
+    '        mavenCentral()',
+    '        gradlePluginPortal()',
+    '    }',
+    '}',
+    'dependencyResolutionManagement {',
+    '    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)',
+    '    repositories {',
+    '        google()',
+    '        mavenCentral()',
+    '    }',
+    '}',
+    "rootProject.name = 'MangaApp'",
+    "include ':app'",
+  ].join('\n'),
+);
 
-write('gradle.properties', [
-  'org.gradle.jvmargs=-Xmx3g -XX:MaxMetaspaceSize=1g',
-  'android.useAndroidX=true',
-  'android.nonTransitiveRClass=true',
-].join('\n'));
+// AGP 8.2.2 + Gradle 8.7 is a stable pair for CI WebView shells
+write(
+  'build.gradle',
+  [
+    'plugins {',
+    "    id 'com.android.application' version '8.2.2' apply false",
+    '}',
+  ].join('\n'),
+);
 
-write('app/build.gradle', [
-  'plugins {',
-  "  id 'com.android.application'",
-  '}',
-  'android {',
-  "  namespace '" + pkg + "'",
-  '  compileSdk ' + targetSdk,
-  '  defaultConfig {',
-  "    applicationId '" + pkg + "'",
-  '    minSdk ' + minSdk,
-  '    targetSdk ' + targetSdk,
-  '    versionCode ' + versionCode,
-  "    versionName '" + versionName + "'",
-  '  }',
-  '  buildTypes {',
-  '    release {',
-  '      minifyEnabled false',
-  '      signingConfig signingConfigs.debug',
-  '    }',
-  '  }',
-  '  compileOptions {',
-  '    sourceCompatibility JavaVersion.VERSION_17',
-  '    targetCompatibility JavaVersion.VERSION_17',
-  '  }',
-  '}',
-  'dependencies {',
-  "  implementation 'androidx.appcompat:appcompat:1.6.1'",
-  '}',
-].join('\n'));
+write(
+  'gradle.properties',
+  [
+    'org.gradle.jvmargs=-Xmx3g -Dfile.encoding=UTF-8 -XX:MaxMetaspaceSize=512m',
+    'org.gradle.parallel=true',
+    'android.useAndroidX=true',
+    'android.nonTransitiveRClass=true',
+    'android.defaults.buildfeatures.buildconfig=true',
+    'android.nonFinalResIds=false',
+  ].join('\n'),
+);
 
-write('app/src/main/AndroidManifest.xml', [
-  '<?xml version="1.0" encoding="utf-8"?>',
-  '<manifest xmlns:android="http://schemas.android.com/apk/res/android">',
-  '  <uses-permission android:name="android.permission.INTERNET" />',
-  '  <application',
-  '    android:label="@string/app_name"',
-  '    android:icon="@drawable/ic_launcher"',
-  '    android:theme="@style/AppTheme"',
-  '    android:usesCleartextTraffic="true">',
-  '    <activity',
-  '      android:name=".MainActivity"',
-  '      android:exported="true"',
-  '      android:configChanges="orientation|screenSize|keyboardHidden">',
-  '      <intent-filter>',
-  '        <action android:name="android.intent.action.MAIN" />',
-  '        <category android:name="android.intent.category.LAUNCHER" />',
-  '      </intent-filter>',
-  '    </activity>',
-  '  </application>',
-  '</manifest>',
-].join('\n'));
+const sdkDir = String(process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT || '').replace(
+  /\\/g,
+  '\\\\',
+);
+if (sdkDir) {
+  write('local.properties', 'sdk.dir=' + sdkDir);
+}
 
-write('app/src/main/res/values/strings.xml', [
-  '<?xml version="1.0" encoding="utf-8"?>',
-  '<resources>',
-  '  <string name="app_name">' + appName.replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</string>',
-  '</resources>',
-].join('\n'));
+write(
+  'app/build.gradle',
+  [
+    'plugins {',
+    "    id 'com.android.application'",
+    '}',
+    '',
+    'android {',
+    "    namespace '" + pkg + "'",
+    '    compileSdk ' + compileSdk,
+    '',
+    '    defaultConfig {',
+    "        applicationId '" + pkg + "'",
+    '        minSdk ' + minSdk,
+    '        targetSdk ' + targetSdk,
+    '        versionCode ' + versionCode,
+    "        versionName '" + versionName + "'",
+    '        vectorDrawables.useSupportLibrary = true',
+    '    }',
+    '',
+    '    buildTypes {',
+    '        release {',
+    '            minifyEnabled false',
+    '            shrinkResources false',
+    '            signingConfig signingConfigs.debug',
+    "            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'",
+    '        }',
+    '        debug {',
+    '            minifyEnabled false',
+    '        }',
+    '    }',
+    '',
+    '    compileOptions {',
+    '        sourceCompatibility JavaVersion.VERSION_17',
+    '        targetCompatibility JavaVersion.VERSION_17',
+    '    }',
+    '',
+    '    packaging {',
+    '        resources {',
+    "            excludes += ['/META-INF/{AL2.0,LGPL2.1}']",
+    '        }',
+    '    }',
+    '}',
+    '',
+    'dependencies {',
+    "    implementation 'androidx.appcompat:appcompat:1.6.1'",
+    "    implementation 'androidx.webkit:webkit:1.11.0'",
+    '}',
+  ].join('\n'),
+);
 
-write('app/src/main/res/values/colors.xml', [
-  '<?xml version="1.0" encoding="utf-8"?>',
-  '<resources>',
-  '  <color name="primary">' + color + '</color>',
-  '</resources>',
-].join('\n'));
+write(
+  'app/proguard-rules.pro',
+  '# WebView\n-keepclassmembers class * {\n    @android.webkit.JavascriptInterface <methods>;\n}\n',
+);
 
-write('app/src/main/res/values/styles.xml', [
-  '<?xml version="1.0" encoding="utf-8"?>',
-  '<resources>',
-  '  <style name="AppTheme" parent="Theme.AppCompat.DayNight.NoActionBar">',
-  '    <item name="colorPrimary">@color/primary</item>',
-  '    <item name="android:windowBackground">@color/primary</item>',
-  '  </style>',
-  '</resources>',
-].join('\n'));
+write(
+  'app/src/main/AndroidManifest.xml',
+  [
+    '<?xml version="1.0" encoding="utf-8"?>',
+    '<manifest xmlns:android="http://schemas.android.com/apk/res/android">',
+    '',
+    '    <uses-permission android:name="android.permission.INTERNET" />',
+    '    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />',
+    '',
+    '    <application',
+    '        android:allowBackup="true"',
+    '        android:icon="@drawable/ic_launcher"',
+    '        android:roundIcon="@drawable/ic_launcher"',
+    '        android:label="@string/app_name"',
+    '        android:supportsRtl="true"',
+    '        android:theme="@style/Theme.MangaApp"',
+    '        android:usesCleartextTraffic="true">',
+    '',
+    '        <activity',
+    '            android:name=".MainActivity"',
+    '            android:exported="true"',
+    '            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize"',
+    '            android:launchMode="singleTask"',
+    '            android:windowSoftInputMode="adjustResize">',
+    '            <intent-filter>',
+    '                <action android:name="android.intent.action.MAIN" />',
+    '                <category android:name="android.intent.category.LAUNCHER" />',
+    '            </intent-filter>',
+    '        </activity>',
+    '    </application>',
+    '</manifest>',
+  ].join('\n'),
+);
 
-write('app/src/main/res/drawable/ic_launcher.xml', [
-  '<?xml version="1.0" encoding="utf-8"?>',
-  '<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">',
-  '  <solid android:color="@color/primary" />',
-  '</shape>',
-].join('\n'));
+write(
+  'app/src/main/res/values/strings.xml',
+  [
+    '<?xml version="1.0" encoding="utf-8"?>',
+    '<resources>',
+    '    <string name="app_name">' + xmlEscape(appName) + '</string>',
+    '</resources>',
+  ].join('\n'),
+);
 
-const safeUrl = (websiteUrl || 'https://example.com').replace(/"/g, '');
-write('app/src/main/java/' + pkgPath + '/MainActivity.java', [
-  'package ' + pkg + ';',
-  '',
-  'import android.app.Activity;',
-  'import android.os.Bundle;',
-  'import android.webkit.WebSettings;',
-  'import android.webkit.WebView;',
-  'import android.webkit.WebViewClient;',
-  '',
-  'public class MainActivity extends Activity {',
-  '  private WebView web;',
-  '',
-  '  @Override',
-  '  protected void onCreate(Bundle state) {',
-  '    super.onCreate(state);',
-  '    web = new WebView(this);',
-  '    WebSettings s = web.getSettings();',
-  '    s.setJavaScriptEnabled(true);',
-  '    s.setDomStorageEnabled(true);',
-  '    s.setLoadWithOverviewMode(true);',
-  '    s.setUseWideViewPort(true);',
-  '    web.setWebViewClient(new WebViewClient());',
-  '    setContentView(web);',
-  '    web.loadUrl("' + safeUrl + '");',
-  '  }',
-  '',
-  '  @Override',
-  '  public void onBackPressed() {',
-  '    if (web != null && web.canGoBack()) {',
-  '      web.goBack();',
-  '    } else {',
-  '      super.onBackPressed();',
-  '    }',
-  '  }',
-  '}',
-].join('\n'));
+write(
+  'app/src/main/res/values/colors.xml',
+  [
+    '<?xml version="1.0" encoding="utf-8"?>',
+    '<resources>',
+    '    <color name="primary">' + color + '</color>',
+    '    <color name="black">#FF000000</color>',
+    '    <color name="white">#FFFFFFFF</color>',
+    '</resources>',
+  ].join('\n'),
+);
 
-console.log('Android project generated for ' + pkg + ' v' + versionName + ' (' + versionCode + ')');
+write(
+  'app/src/main/res/values/themes.xml',
+  [
+    '<?xml version="1.0" encoding="utf-8"?>',
+    '<resources>',
+    '    <style name="Theme.MangaApp" parent="Theme.AppCompat.DayNight.NoActionBar">',
+    '        <item name="colorPrimary">@color/primary</item>',
+    '        <item name="colorPrimaryDark">@color/primary</item>',
+    '        <item name="colorAccent">@color/primary</item>',
+    '        <item name="android:statusBarColor">@color/primary</item>',
+    '        <item name="android:navigationBarColor">@color/black</item>',
+    '        <item name="android:windowBackground">@color/black</item>',
+    '    </style>',
+    '</resources>',
+  ].join('\n'),
+);
+
+// Vector drawable launcher icon only (no mipmap XML — avoids AAPT2 MergeResources failures)
+write(
+  'app/src/main/res/drawable/ic_launcher.xml',
+  [
+    '<?xml version="1.0" encoding="utf-8"?>',
+    '<vector xmlns:android="http://schemas.android.com/apk/res/android"',
+    '    android:width="108dp"',
+    '    android:height="108dp"',
+    '    android:viewportWidth="108"',
+    '    android:viewportHeight="108">',
+    '    <path',
+    '        android:fillColor="' + color + '"',
+    '        android:pathData="M0,0h108v108h-108z" />',
+    '    <path',
+    '        android:fillColor="#FFFFFF"',
+    '        android:pathData="M30,30h48v48h-48z" />',
+    '</vector>',
+  ].join('\n'),
+);
+
+write(
+  'app/src/main/java/' + pkgPath + '/MainActivity.java',
+  [
+    'package ' + pkg + ';',
+    '',
+    'import android.annotation.SuppressLint;',
+    'import android.os.Bundle;',
+    'import android.webkit.WebChromeClient;',
+    'import android.webkit.WebSettings;',
+    'import android.webkit.WebView;',
+    'import android.webkit.WebViewClient;',
+    'import androidx.appcompat.app.AppCompatActivity;',
+    '',
+    'public class MainActivity extends AppCompatActivity {',
+    '    private WebView webView;',
+    '',
+    '    @Override',
+    '    @SuppressLint("SetJavaScriptEnabled")',
+    '    protected void onCreate(Bundle savedInstanceState) {',
+    '        super.onCreate(savedInstanceState);',
+    '        webView = new WebView(this);',
+    '        setContentView(webView);',
+    '',
+    '        WebSettings settings = webView.getSettings();',
+    '        settings.setJavaScriptEnabled(true);',
+    '        settings.setDomStorageEnabled(true);',
+    '        settings.setLoadWithOverviewMode(true);',
+    '        settings.setUseWideViewPort(true);',
+    '        settings.setSupportZoom(false);',
+    '        settings.setBuiltInZoomControls(false);',
+    '        settings.setDisplayZoomControls(false);',
+    '        settings.setMediaPlaybackRequiresUserGesture(false);',
+    '        settings.setAllowFileAccess(false);',
+    '        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);',
+    '',
+    '        webView.setWebViewClient(new WebViewClient());',
+    '        webView.setWebChromeClient(new WebChromeClient());',
+    '        webView.loadUrl("' + safeUrl + '");',
+    '    }',
+    '',
+    '    @Override',
+    '    @SuppressWarnings("deprecation")',
+    '    public void onBackPressed() {',
+    '        if (webView != null && webView.canGoBack()) {',
+    '            webView.goBack();',
+    '        } else {',
+    '            super.onBackPressed();',
+    '        }',
+    '    }',
+    '',
+    '    @Override',
+    '    protected void onDestroy() {',
+    '        if (webView != null) {',
+    '            webView.destroy();',
+    '            webView = null;',
+    '        }',
+    '        super.onDestroy();',
+    '    }',
+    '}',
+  ].join('\n'),
+);
+
+console.log(
+  'Android project generated for ' + pkg + ' v' + versionName + ' (' + versionCode + ') url=' + websiteUrl,
+);
