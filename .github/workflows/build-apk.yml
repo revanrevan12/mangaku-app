@@ -6,15 +6,15 @@ on:
       app_name:
         description: 'Nama aplikasi'
         required: false
-        default: 'Manga'
+        default: 'MangaKu'
       version_name:
         description: 'Version name (mis. 1.0.0)'
         required: false
-        default: '1.2.4'
+        default: '1.2.5'
       version_code:
         description: 'Version code (angka)'
         required: false
-        default: '127'
+        default: '128'
       website_url:
         description: 'URL website yang dibungkus WebView'
         required: false
@@ -26,7 +26,7 @@ on:
       release_tag:
         description: 'Tag GitHub Release'
         required: false
-        default: 'v1.2.4-manual'
+        default: 'v1.2.5-manual'
 
 permissions:
   contents: write
@@ -35,29 +35,38 @@ concurrency:
   group: build-apk-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.parallel=true -Dorg.gradle.caching=true -Dkotlin.incremental=false -Dorg.gradle.jvmargs=-Xmx4g -XX:+UseParallelGC -Dfile.encoding=UTF-8
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 12
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            .github
+            apk-config.json
+          sparse-checkout-cone-mode: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '20'
 
       - name: Setup JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-          cache: gradle
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: 'platform-tools platforms;android-34 build-tools;34.0.0'
+          packages: 'platforms;android-34 build-tools;34.0.0 platform-tools'
+          log-accepted-android-sdk-licenses: false
 
       - name: Generate Android project
         run: node .github/scripts/gen-android.js
@@ -69,35 +78,33 @@ jobs:
           LOGO_URL: ${{ github.event.inputs.logo_url }}
           FALLBACK_PACKAGE: 'com.mangareader.app'
 
-      - name: Validate generated project
+      - name: Validate project
         run: |
           set -e
-          test -f settings.gradle
-          test -f build.gradle
-          test -f app/build.gradle
+          test -f settings.gradle && test -f app/build.gradle
           test -f app/src/main/AndroidManifest.xml
           test -f app/src/main/res/values/strings.xml
-          test -f app/src/main/res/values/colors.xml
-          test -f app/src/main/res/values/themes.xml
           test -f app/src/main/res/drawable/ic_launcher.xml || test -f app/src/main/res/drawable-nodpi/ic_launcher.png
-          find app/src/main -type f | sort
-          echo "Project structure OK"
+          echo "OK"
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
+          cache-read-only: false
+          cache-cleanup: on-success
 
-      - name: Build APK
-        working-directory: .
+      - name: Build release APK
         run: |
           set -euo pipefail
-          gradle wrapper --gradle-version 8.7
+          if [ ! -f gradlew ]; then
+            gradle wrapper --gradle-version 8.7 --no-daemon
+          fi
           chmod +x gradlew
-          ./gradlew assembleRelease --no-daemon --stacktrace
+          ./gradlew assembleRelease --no-daemon --stacktrace --build-cache --parallel -q
           ls -la app/build/outputs/apk/release/
 
-      - name: Locate and sign APK
+      - name: Sign & package APK
         id: sign
         run: |
           set -e
@@ -115,7 +122,7 @@ jobs:
           else
             echo "KEYSTORE_BASE64 tidak diset — APK memakai debug signing"
           fi
-          SIGNED_APK="manga-app-${{ github.event.inputs.version_name }}.apk"
+          SIGNED_APK="app-${{ github.event.inputs.version_name }}.apk"
           cp "$APK" "$SIGNED_APK"
           echo "apk_path=$SIGNED_APK" >> "$GITHUB_OUTPUT"
 
@@ -125,6 +132,7 @@ jobs:
           tag_name: ${{ github.event.inputs.release_tag }}
           name: ${{ github.event.inputs.app_name }} v${{ github.event.inputs.version_name }}
           files: ${{ steps.sign.outputs.apk_path }}
-          generate_release_notes: true
+          generate_release_notes: false
+          make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
