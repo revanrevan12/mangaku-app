@@ -185,6 +185,16 @@ jobs:
           export PATH="/opt/gradle-${GRADLE_VER}/bin:$PATH"
           gradle --version
 
+      - name: Generate debug keystore
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.config/.android"
+
+          keytool -genkeypair             -v             -keystore "$HOME/.config/.android/debug.keystore"             -storepass android             -alias androiddebugkey             -keypass android             -keyalg RSA             -keysize 2048             -validity 10000             -dname "CN=Android Debug,O=Android,C=US"
+
+          test -f "$HOME/.config/.android/debug.keystore"
+          ls -lh "$HOME/.config/.android/debug.keystore"
+
       - name: Build release APK
         run: |
           set -euo pipefail
