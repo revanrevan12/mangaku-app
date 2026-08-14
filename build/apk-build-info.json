@@ -1,0 +1,9 @@
+{
+  "app_name": "Manga Reader",
+  "package_id": "com.mangareader.app",
+  "version_name": "1.2.5",
+  "version_code": 125,
+  "build_mode": "release",
+  "architecture": "armv7_arm64",
+  "pushed_at": "2026-08-14T03:10:14.641Z"
+}
