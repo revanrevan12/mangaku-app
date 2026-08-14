@@ -10,8 +10,8 @@ android {
         applicationId "com.mangareader.app"
         minSdk 21
         targetSdk 34
-        versionCode 127
-        versionName "1.2.9"
+        versionCode 125
+        versionName "1.2.5"
         vectorDrawables.useSupportLibrary = true
     }
 
