@@ -1,45 +1,28 @@
-apply plugin: 'com.android.application'
-
-// Signing config: reads keystore.properties (created by the GitHub Actions
-// workflow from the KEYSTORE_PASSWORD / KEY_ALIAS / KEY_PASSWORD secrets).
-// Falls back gracefully when the file is absent (local debug builds).
-def keystoreProperties = new Properties()
-def keystorePropertiesFile = rootProject.file('keystore.properties')
-if (keystorePropertiesFile.exists()) {
-    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+plugins {
+    id 'com.android.application'
 }
 
 android {
-    namespace 'id.mangaku.app'
+    namespace 'com.mangareader.app'
     compileSdk 34
 
     defaultConfig {
-        applicationId "id.mangaku.app"
+        applicationId "com.mangareader.app"
         minSdk 21
         targetSdk 34
-        versionCode 10000
-        versionName "1.0.0"
-        vectorDrawables.useSupportLibrary true
-    }
-
-    signingConfigs {
-        release {
-            if (keystorePropertiesFile.exists()) {
-                // storeFile path from properties (relative to app/ dir, or absolute)
-                def ksPath = keystoreProperties['storeFile']
-                storeFile ksPath ? new File(projectDir, ksPath) : rootProject.file('release.keystore')
-                storePassword keystoreProperties['storePassword']
-                keyAlias keystoreProperties['keyAlias']
-                keyPassword keystoreProperties['keyPassword']
-            }
-        }
+        versionCode 125
+        versionName "1.2.8"
+        resConfigs "in", "en"
     }
 
     buildTypes {
         release {
-            minifyEnabled false
-            signingConfig keystorePropertiesFile.exists() ? signingConfigs.release : null
+            minifyEnabled true
+            shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            // Unsigned here on purpose: the CI signs with apksigner (v1+v2+v3)
+            // after zipalign, which produces a signature Android accepts.
+            signingConfig null
         }
         debug {
             minifyEnabled false
@@ -50,10 +33,18 @@ android {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
+
+    packagingOptions {
+        resources.excludes += ['META-INF/*.kotlin_module']
+    }
+
+    lint {
+        abortOnError false
+    }
 }
 
 dependencies {
     implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'androidx.webkit:webkit:1.11.0'
     implementation 'androidx.swiperefreshlayout:swiperefreshlayout:1.1.0'
-    implementation 'com.google.android.material:material:1.12.0'
 }
