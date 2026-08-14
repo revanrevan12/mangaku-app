@@ -12,7 +12,6 @@ try {
 
 const env = process.env;
 
-// App name = website name exactly (no Reader/App/Application suffix).
 const nameCandidates = [env.APP_NAME, cfg.app_name, cfg.site_name]
   .map((v) => String(v || '').trim())
   .filter((v) => v && !/^(app|application|android|manga)$/i.test(v));
@@ -31,33 +30,26 @@ if (!/^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$/.test(pkg)) {
 
 const versionName = String(env.VERSION_NAME || cfg.version_name || '1.0.0')
   .replace(/'/g, '')
-  .replace(/"/g, '');
+  .replace(/"/g, '')
+  .replace(/[^\w.-]/g, '');
 const versionCode = Math.max(1, parseInt(env.VERSION_CODE || cfg.version_code || '1', 10) || 1);
 const websiteUrl = String(env.WEBSITE_URL || cfg.website_url || 'https://example.com').trim();
-const logoUrl = String(env.LOGO_URL || cfg.logo_url || '').trim();
-
 let color = String(cfg.primary_color || '#E23636').trim();
-// colors.xml only accepts #RGB / #ARGB / #RRGGBB / #AARRGGBB
 if (!/^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/.test(color)) {
   color = '#E23636';
 }
-// Normalize short hex
 if (color.length === 4) {
-  color =
-    '#' +
-    color[1] +
-    color[1] +
-    color[2] +
-    color[2] +
-    color[3] +
-    color[3];
+  color = '#' + color[1] + color[1] + color[2] + color[2] + color[3] + color[3];
+}
+if (color.length === 9) {
+  color = '#' + color.slice(3);
 }
 
 const minSdk = Math.max(21, parseInt(cfg.min_sdk || 24, 10) || 24);
 const targetSdk = Math.min(34, Math.max(minSdk, parseInt(cfg.target_sdk || 34, 10) || 34));
 const compileSdk = 34;
 
-// AGP 8.2.2 + Gradle 8.2 — widely proven on ubuntu-latest GitHub runners
+// AGP 8.2.2 + Gradle 8.2 — stable on ubuntu-latest
 const AGP_VERSION = '8.2.2';
 const GRADLE_VERSION = '8.2';
 
@@ -66,12 +58,6 @@ const writeText = (p, content) => {
   const body = String(content);
   fs.writeFileSync(p, body.endsWith('\n') ? body : body + '\n', 'utf8');
   console.log('wrote', p);
-};
-
-const writeBinary = (p, buf) => {
-  fs.mkdirSync(path.dirname(p), { recursive: true });
-  fs.writeFileSync(p, buf);
-  console.log('wrote binary', p, '(' + buf.length + ' bytes)');
 };
 
 const xmlEscape = (s) =>
@@ -92,77 +78,6 @@ const appUrl =
   '&app_code=' +
   versionCode;
 const safeUrl = appUrl.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-
-let logoDownloaded = false;
-
-function isPng(buf) {
-  return (
-    buf &&
-    buf.length >= 100 &&
-    buf[0] === 0x89 &&
-    buf[1] === 0x50 &&
-    buf[2] === 0x4e &&
-    buf[3] === 0x47
-  );
-}
-
-// AAPT2 often OOMs or fails on multi-MB launcher PNGs. Cap at 400KB.
-const MAX_ICON_BYTES = 400 * 1024;
-
-function installPngIcon(buf) {
-  if (!isPng(buf)) {
-    console.warn('Icon is not a valid PNG');
-    return false;
-  }
-  if (buf.length > MAX_ICON_BYTES) {
-    console.warn(
-      'Icon is ' +
-        buf.length +
-        ' bytes (>' +
-        MAX_ICON_BYTES +
-        '); using vector fallback to avoid AAPT2 OOM.',
-    );
-    return false;
-  }
-  // Prefer mipmap-hdpi (standard launcher density). Avoid drawable-nodpi
-  // which has caused resource linking issues with some AGP versions.
-  writeBinary('app/src/main/res/mipmap-hdpi/ic_launcher.png', buf);
-  writeBinary('app/src/main/res/mipmap-mdpi/ic_launcher.png', buf);
-  writeBinary('app/src/main/res/mipmap-xhdpi/ic_launcher.png', buf);
-  return true;
-}
-
-function localLogoIcon() {
-  try {
-    if (!fs.existsSync('apk-icon.b64')) return false;
-    const b64 = fs.readFileSync('apk-icon.b64', 'utf8').replace(/\s+/g, '');
-    if (b64.length < 100) return false;
-    const buf = Buffer.from(b64, 'base64');
-    if (!installPngIcon(buf)) return false;
-    console.log('App icon set from committed website logo (' + buf.length + ' bytes).');
-    return true;
-  } catch (e) {
-    console.warn('Local icon decode failed:', e.message);
-    return false;
-  }
-}
-
-async function downloadLogoIcon() {
-  if (localLogoIcon()) return true;
-  if (!logoUrl) return false;
-  try {
-    console.log('Downloading app icon from', logoUrl);
-    const r = await fetch(logoUrl, { redirect: 'follow' });
-    if (!r.ok) throw new Error('logo fetch failed: ' + r.status);
-    const buf = Buffer.from(await r.arrayBuffer());
-    if (!installPngIcon(buf)) return false;
-    console.log('App icon set from website logo (' + buf.length + ' bytes).');
-    return true;
-  } catch (e) {
-    console.warn('Logo download failed, using vector fallback:', e.message);
-    return false;
-  }
-}
 
 function writeVectorIcon() {
   writeText(
@@ -191,7 +106,6 @@ function writeVectorIcon() {
   } catch {
     /* ignore */
   }
-  // Clean any leftover root gradle files from previous runs on the runner workspace
   for (const f of [
     'settings.gradle',
     'build.gradle',
@@ -212,7 +126,19 @@ function writeVectorIcon() {
     /* ignore */
   }
 
-  logoDownloaded = await downloadLogoIcon();
+  // Always use vector launcher — PNG website logos frequently break AAPT2 on CI.
+  if (fs.existsSync('apk-icon.b64')) {
+    try {
+      const b64 = fs.readFileSync('apk-icon.b64', 'utf8').replace(/\s+/g, '');
+      console.log(
+        'apk-icon.b64 present (' +
+          Buffer.from(b64, 'base64').length +
+          ' bytes) — skipping PNG, using vector launcher.',
+      );
+    } catch {
+      /* ignore */
+    }
+  }
 
   writeText(
     'settings.gradle',
@@ -248,9 +174,8 @@ function writeVectorIcon() {
   writeText(
     'gradle.properties',
     [
-      'org.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8 -XX:MaxMetaspaceSize=512m',
+      'org.gradle.jvmargs=-Xmx1536m -Dfile.encoding=UTF-8 -XX:MaxMetaspaceSize=384m',
       'org.gradle.parallel=false',
-      '# Build cache disabled — GHA cache save was failing with path errors',
       'org.gradle.caching=false',
       'org.gradle.configuration-cache=false',
       'org.gradle.configureondemand=false',
@@ -286,6 +211,10 @@ function writeVectorIcon() {
     console.warn('ANDROID_HOME not set at generate time — Gradle will use env on build.');
   }
 
+  // Use built-in debug signing for release so assembleRelease always produces
+  // an installable APK without a custom keystore. Workflow creates
+  // ~/.android/debug.keystore before the build. Optional release re-sign
+  // happens later via apksigner when KEYSTORE_BASE64 is set.
   writeText(
     'app/build.gradle',
     [
@@ -302,13 +231,7 @@ function writeVectorIcon() {
       '        minSdk ' + minSdk,
       '        targetSdk ' + targetSdk,
       '        versionCode ' + versionCode,
-      "        versionName '" + versionName + "'",
-      '    }',
-      '',
-      '    signingConfigs {',
-      '        release {',
-      '            initWith debug',
-      '        }',
+      '        versionName "' + versionName + '"',
       '    }',
       '',
       '    buildTypes {',
@@ -316,11 +239,7 @@ function writeVectorIcon() {
       '            minifyEnabled false',
       '            shrinkResources false',
       '            debuggable false',
-      '            signingConfig signingConfigs.release',
-      '        }',
-      '        debug {',
-      '            minifyEnabled false',
-      '            debuggable true',
+      '            signingConfig signingConfigs.debug',
       '        }',
       '    }',
       '',
@@ -353,8 +272,7 @@ function writeVectorIcon() {
     '# WebView\n-keepclassmembers class * {\n    @android.webkit.JavascriptInterface <methods>;\n}\n',
   );
 
-  // Icon reference: mipmap if PNG installed, else drawable vector
-  const iconRef = logoDownloaded ? '@mipmap/ic_launcher' : '@drawable/ic_launcher';
+  const iconRef = '@drawable/ic_launcher';
 
   writeText(
     'app/src/main/AndroidManifest.xml',
@@ -429,10 +347,23 @@ function writeVectorIcon() {
     ].join('\n'),
   );
 
-  // Only ONE ic_launcher resource family (PNG mipmap XOR vector drawable)
-  if (!logoDownloaded) {
-    writeVectorIcon();
-  }
+  writeText(
+    'app/src/main/res/layout/activity_main.xml',
+    [
+      '<?xml version="1.0" encoding="utf-8"?>',
+      '<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"',
+      '    android:layout_width="match_parent"',
+      '    android:layout_height="match_parent"',
+      '    android:background="@color/black">',
+      '    <WebView',
+      '        android:id="@+id/webview"',
+      '        android:layout_width="match_parent"',
+      '        android:layout_height="match_parent" />',
+      '</FrameLayout>',
+    ].join('\n'),
+  );
+
+  writeVectorIcon();
 
   writeText(
     'app/src/main/java/' + pkgPath + '/MainActivity.java',
@@ -454,8 +385,8 @@ function writeVectorIcon() {
       '    @SuppressLint("SetJavaScriptEnabled")',
       '    protected void onCreate(Bundle savedInstanceState) {',
       '        super.onCreate(savedInstanceState);',
-      '        webView = new WebView(this);',
-      '        setContentView(webView);',
+      '        setContentView(R.layout.activity_main);',
+      '        webView = (WebView) findViewById(R.id.webview);',
       '',
       '        WebSettings settings = webView.getSettings();',
       '        settings.setJavaScriptEnabled(true);',
@@ -488,6 +419,7 @@ function writeVectorIcon() {
       '    @Override',
       '    protected void onDestroy() {',
       '        if (webView != null) {',
+      '            webView.stopLoading();',
       '            webView.destroy();',
       '            webView = null;',
       '        }',
@@ -497,7 +429,6 @@ function writeVectorIcon() {
     ].join('\n'),
   );
 
-  // Sanity checks before handing off to Gradle
   const mustExist = [
     'settings.gradle',
     'build.gradle',
@@ -505,6 +436,7 @@ function writeVectorIcon() {
     'app/src/main/AndroidManifest.xml',
     'app/src/main/res/values/strings.xml',
     'app/src/main/res/values/themes.xml',
+    'app/src/main/res/layout/activity_main.xml',
     'app/src/main/java/' + pkgPath + '/MainActivity.java',
   ];
   for (const f of mustExist) {
@@ -530,7 +462,7 @@ function writeVectorIcon() {
       versionCode +
       ') url=' +
       websiteUrl +
-      (logoDownloaded ? ' icon=website-logo-mipmap' : ' icon=vector-fallback') +
+      ' icon=vector' +
       ' agp=' +
       AGP_VERSION +
       ' gradle=' +
