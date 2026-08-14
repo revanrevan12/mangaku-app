@@ -10,11 +10,11 @@ on:
       version_name:
         description: 'Version name (mis. 1.0.0)'
         required: false
-        default: '1.2.30'
+        default: '1.2.31'
       version_code:
         description: 'Version code (angka)'
         required: false
-        default: '153'
+        default: '154'
       website_url:
         description: 'URL website yang dibungkus WebView'
         required: false
@@ -26,20 +26,16 @@ on:
       release_tag:
         description: 'Tag GitHub Release'
         required: false
-        default: 'v1.2.30-manual'
+        default: 'v1.2.31-manual'
 
 permissions:
   contents: write
 
-# Queue builds on the same branch — never cancel a running APK build.
-# cancel-in-progress:true was aborting builds with:
-#   "Cancelling since a higher priority waiting request for build-apk-..."
 concurrency:
   group: build-apk-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
 env:
-  # Keep Gradle lean on GitHub runners — no daemon, no parallel, no build cache writes
   GRADLE_OPTS: >-
     -Dorg.gradle.daemon=false
     -Dorg.gradle.parallel=false
@@ -47,14 +43,13 @@ env:
     -Dorg.gradle.caching=false
     -Dorg.gradle.configuration-cache=false
     -Dfile.encoding=UTF-8
-  JAVA_TOOL_OPTIONS: -Xmx2g
-  # Prefer Node 24 runtime for JS-based actions (avoids Node 20 deprecation noise)
+  JAVA_TOOL_OPTIONS: -Xmx1536m
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -80,16 +75,12 @@ jobs:
             echo "::error::Expected Node.js 22+, got $(node -v)"
             exit 1
           fi
-          # Surface action runtime env for debugging deprecation warnings
-          echo "FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=${FORCE_JAVASCRIPT_ACTIONS_TO_NODE24:-unset}"
 
       - name: Setup JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-          # Do NOT enable gradle-cache here — it races with setup-gradle and
-          # produces "Failed to save cache entry" noise that can fail the job.
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
@@ -104,6 +95,8 @@ jobs:
           node -v
           test -f .github/scripts/gen-android.js
           node .github/scripts/gen-android.js
+          echo "=== Generated app/build.gradle ==="
+          cat app/build.gradle
         env:
           APP_NAME: ${{ github.event.inputs.app_name }}
           VERSION_NAME: ${{ github.event.inputs.version_name }}
@@ -122,58 +115,37 @@ jobs:
           test -f app/src/main/res/values/strings.xml
           test -f app/src/main/res/values/themes.xml
           test -f app/src/main/res/values/colors.xml
+          test -f app/src/main/res/layout/activity_main.xml
 
-          # Drop legacy/corrupt/oversized icons (AAPT2 killers)
-          find app/src/main/res -name 'ic_launcher.png' -type f 2>/dev/null | while read -r p; do
-            if ! head -c 4 "$p" | grep -q $'\x89PNG'; then
-              echo "Corrupt PNG — removing $p"
-              rm -f "$p"
-            else
-              SZ=$(wc -c < "$p" | tr -d ' ')
-              if [ "$SZ" -gt 409600 ]; then
-                echo "Oversized icon $SZ bytes — removing $p"
-                rm -f "$p"
-              fi
-            fi
-          done
-
-          HAS_PNG=0
-          HAS_XML=0
-          if ls app/src/main/res/mipmap-*/ic_launcher.png >/dev/null 2>&1; then HAS_PNG=1; fi
-          if [ -f app/src/main/res/drawable/ic_launcher.xml ]; then HAS_XML=1; fi
-
-          # Only one icon family
-          if [ "$HAS_PNG" -eq 1 ] && [ "$HAS_XML" -eq 1 ]; then
-            rm -f app/src/main/res/drawable/ic_launcher.xml
-            HAS_XML=0
-          fi
-
-          if [ "$HAS_PNG" -eq 0 ] && [ "$HAS_XML" -eq 0 ]; then
-            mkdir -p app/src/main/res/drawable
+          # Prefer vector icon — PNG launchers are a frequent AAPT2 failure source
+          # on CI (corrupt base64, huge files, wrong color type).
+          rm -f app/src/main/res/mipmap-*/ic_launcher.png 2>/dev/null || true
+          find app/src/main/res -type d -name 'mipmap-*' -empty -delete 2>/dev/null || true
+          mkdir -p app/src/main/res/drawable
+          if [ ! -f app/src/main/res/drawable/ic_launcher.xml ]; then
             printf '%s\n' \
               '<?xml version="1.0" encoding="utf-8"?>' \
               '<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">' \
               '<path android:fillColor="#E23636" android:pathData="M0,0h108v108h-108z"/>' \
               '<path android:fillColor="#FFFFFF" android:pathData="M30,30h48v48h-48z"/>' \
               '</vector>' > app/src/main/res/drawable/ic_launcher.xml
-            sed -i 's|@mipmap/ic_launcher|@drawable/ic_launcher|g' app/src/main/AndroidManifest.xml
           fi
-          if [ "$HAS_PNG" -eq 1 ]; then
-            sed -i 's|@drawable/ic_launcher|@mipmap/ic_launcher|g' app/src/main/AndroidManifest.xml
+          sed -i 's|@mipmap/ic_launcher|@drawable/ic_launcher|g' app/src/main/AndroidManifest.xml
+
+          # Sanity: no leftover PNG icons
+          if ls app/src/main/res/mipmap-*/ic_launcher.png >/dev/null 2>&1; then
+            echo "::warning::PNG icons still present — removing"
+            rm -f app/src/main/res/mipmap-*/ic_launcher.png
           fi
 
-          echo "=== app/build.gradle ==="
-          cat app/build.gradle
           echo "=== Manifest icon ==="
           grep -E 'icon|roundIcon' app/src/main/AndroidManifest.xml || true
           echo "=== res tree ==="
           find app/src/main/res -type f | sort
+          echo "=== Java sources ==="
+          find app/src/main/java -type f | sort
           echo "Project OK"
 
-      # Install Gradle via the official distribution — NO gradle/actions/setup-gradle.
-      # That action's cache save step was failing with:
-      #   Failed to save cache entry with path '/home/runner/.gradle/caches,...'
-      # and contributed to flaky / failed jobs. We build without remote Gradle cache.
       - name: Install Gradle 8.2
         run: |
           set -euo pipefail
@@ -185,16 +157,11 @@ jobs:
           export PATH="/opt/gradle-${GRADLE_VER}/bin:$PATH"
           gradle --version
 
-      # Generate a deterministic debug keystore so the release signing config
-      # (initWith debug) always has a valid keystore to sign with, even when no
-      # release keystore secrets are configured. This guarantees a signed APK
-      # is produced on every build.
       - name: Generate debug keystore
         run: |
           set -euo pipefail
           mkdir -p ~/.android
           KEYTOOL=$(which keytool)
-          echo "keytool: ${KEYTOOL}"
           if [ ! -f ~/.android/debug.keystore ]; then
             "$KEYTOOL" -genkeypair \
               -v \
@@ -206,11 +173,13 @@ jobs:
               -keysize 2048 \
               -validity 10000 \
               -dname "CN=Android Debug,O=Android,C=US"
-            echo "Debug keystore created at ~/.android/debug.keystore"
+            echo "Debug keystore created"
           else
             echo "Debug keystore already exists"
           fi
           ls -la ~/.android/debug.keystore
+          # Verify keystore is readable
+          keytool -list -keystore ~/.android/debug.keystore -storepass android | head -20
 
       - name: Build release APK
         run: |
@@ -220,33 +189,46 @@ jobs:
           java -version
           gradle --version || true
 
-          if [ -n "${ANDROID_HOME:-}" ]; then
-            # Escape backslashes for properties file
-            SDK_ESC=$(printf '%s' "$ANDROID_HOME" | sed 's/\\/\\\\/g')
-            echo "sdk.dir=${SDK_ESC}" > local.properties
-          else
-            echo "ANDROID_HOME empty — abort"
+          if [ -z "${ANDROID_HOME:-}" ]; then
+            echo "::error::ANDROID_HOME empty"
             exit 1
           fi
+          SDK_ESC=$(printf '%s' "$ANDROID_HOME" | sed 's/\\/\\\\/g')
+          echo "sdk.dir=${SDK_ESC}" > local.properties
           cat local.properties
 
-          # Always generate a fresh wrapper so we don't depend on committed jars
+          # Fresh wrapper
           gradle wrapper --gradle-version 8.2 --no-daemon
           chmod +x gradlew
           test -f gradle/wrapper/gradle-wrapper.jar
           test -f gradle/wrapper/gradle-wrapper.properties
 
-          # Disable any residual build-cache / configuration-cache
           {
             echo 'org.gradle.caching=false'
             echo 'org.gradle.configuration-cache=false'
             echo 'org.gradle.daemon=false'
             echo 'org.gradle.parallel=false'
             echo 'org.gradle.workers.max=1'
-            echo 'org.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8 -XX:MaxMetaspaceSize=512m'
+            echo 'org.gradle.jvmargs=-Xmx1536m -Dfile.encoding=UTF-8 -XX:MaxMetaspaceSize=384m'
             echo 'android.useAndroidX=true'
             echo 'android.nonTransitiveRClass=true'
           } > gradle.properties
+
+          dump_errors() {
+            local logf="$1"
+            echo "======== GRADLE ERROR SUMMARY ========"
+            # Print the real failure block for GitHub annotations + our UI scraper
+            grep -nE 'FAILURE:|What went wrong:|Execution failed|error:|AAPT|Caused by:|Could not |Task :.* FAILED|> ' \
+              "$logf" | tail -n 80 || true
+            echo "======== LAST 80 LINES ========"
+            tail -n 80 "$logf" || true
+            # Emit GitHub error annotations from key lines
+            grep -E 'What went wrong:|Execution failed for task|error:|AAPT2? aapt2' "$logf" \
+              | head -n 15 \
+              | while IFS= read -r line; do
+                  echo "::error::${line}"
+                done || true
+          }
 
           build_once() {
             local label="$1"
@@ -259,51 +241,59 @@ jobs:
               --no-build-cache \
               --max-workers=1 \
               --stacktrace \
+              --info \
               2>&1 | tee "/tmp/gradle-${label}.log"
             local rc=${PIPESTATUS[0]}
             set -e
+            if [ "$rc" -ne 0 ]; then
+              dump_errors "/tmp/gradle-${label}.log"
+            fi
             return "$rc"
           }
 
+          # First attempt: plain assembleRelease
           if ! build_once first assembleRelease; then
-            echo '--- First build failed; extracting errors ---'
-            grep -E 'FAILURE:|error:|What went wrong:|AAPT|Execution failed|Could not|Caused by:' \
-              /tmp/gradle-first.log | tail -n 60 || true
-            tail -n 40 /tmp/gradle-first.log || true
-
-            echo '--- Retry: clean + vector icon + assembleRelease ---'
+            echo '--- First build failed; clean retry ---'
             ./gradlew --stop || true
             rm -rf app/build .gradle build
 
-            # Drop PNG icons — common AAPT2 failure source
-            if ls app/src/main/res/mipmap-*/ic_launcher.png >/dev/null 2>&1; then
-              echo "Removing PNG icons for retry"
-              rm -f app/src/main/res/mipmap-*/ic_launcher.png
-              mkdir -p app/src/main/res/drawable
-              printf '%s\n' \
-                '<?xml version="1.0" encoding="utf-8"?>' \
-                '<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">' \
-                '<path android:fillColor="#E23636" android:pathData="M0,0h108v108h-108z"/>' \
-                '<path android:fillColor="#FFFFFF" android:pathData="M30,30h48v48h-48z"/>' \
-                '</vector>' > app/src/main/res/drawable/ic_launcher.xml
-              sed -i 's|@mipmap/ic_launcher|@drawable/ic_launcher|g' app/src/main/AndroidManifest.xml
+            # Ensure vector-only icons again
+            rm -f app/src/main/res/mipmap-*/ic_launcher.png 2>/dev/null || true
+            mkdir -p app/src/main/res/drawable
+            printf '%s\n' \
+              '<?xml version="1.0" encoding="utf-8"?>' \
+              '<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">' \
+              '<path android:fillColor="#E23636" android:pathData="M0,0h108v108h-108z"/>' \
+              '<path android:fillColor="#FFFFFF" android:pathData="M30,30h48v48h-48z"/>' \
+              '</vector>' > app/src/main/res/drawable/ic_launcher.xml
+            sed -i 's|@mipmap/ic_launcher|@drawable/ic_launcher|g' app/src/main/AndroidManifest.xml
+
+            # Ensure keystore exists
+            if [ ! -f ~/.android/debug.keystore ]; then
+              keytool -genkeypair -keystore ~/.android/debug.keystore \
+                -storepass android -alias androiddebugkey -keypass android \
+                -keyalg RSA -keysize 2048 -validity 10000 \
+                -dname "CN=Android Debug,O=Android,C=US"
             fi
 
             if ! build_once retry clean assembleRelease; then
-              echo '--- Retry also failed ---'
-              grep -E 'FAILURE:|error:|What went wrong:|AAPT|Execution failed|Could not|Caused by:' \
-                /tmp/gradle-retry.log | tail -n 80 || true
-              tail -n 100 /tmp/gradle-retry.log || true
+              echo "::error::assembleRelease failed after clean + vector-icon retry"
+              # Surface full failure block for admin UI log scraper
+              if [ -f /tmp/gradle-retry.log ]; then
+                echo "======== FULL FAILURE BLOCK ========"
+                awk '/FAILURE:/{p=1} p{print} /BUILD FAILED/{exit}' /tmp/gradle-retry.log || true
+              fi
               exit 1
             fi
           fi
 
           ls -la app/build/outputs/apk/release/ || {
-            echo "Release APK missing"
+            echo "::error::Release APK missing"
             find app/build -name '*.apk' 2>/dev/null || true
             exit 1
           }
           echo "APK build OK"
+          find app/build/outputs/apk -name '*.apk' -ls
 
       - name: Sign & package APK
         id: sign
@@ -311,7 +301,7 @@ jobs:
           set -euo pipefail
           APK=$(find . -path '*/outputs/apk/release/*.apk' ! -name '*.apk.idsig' | head -1)
           if [ -z "$APK" ]; then
-            echo "APK tidak ditemukan"
+            echo "::error::APK tidak ditemukan"
             find . -name '*.apk' 2>/dev/null || true
             exit 1
           fi
@@ -325,7 +315,7 @@ jobs:
               "$APK"
             echo "Signed with release keystore"
           else
-            echo "KEYSTORE_BASE64 tidak diset — APK memakai debug signing (initWith debug)"
+            echo "KEYSTORE_BASE64 tidak diset — APK memakai debug signing"
           fi
           SIGNED_APK="app-${{ github.event.inputs.version_name }}.apk"
           cp "$APK" "$SIGNED_APK"
