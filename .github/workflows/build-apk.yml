@@ -112,29 +112,55 @@ jobs:
             app.config.json
           if-no-files-found: error
 
+      - name: Pack source ZIP
+        id: source
+        run: |
+          SRC="dist/${APP_NAME// /-}-${VERSION_NAME}-${VERSION_CODE}-source.zip"
+          mkdir -p dist/srcpack
+          cp -f app.config.json dist/srcpack/ 2>/dev/null || true
+          mkdir -p dist/srcpack/.github/workflows
+          cp -f .github/workflows/build-apk.yml dist/srcpack/.github/workflows/ 2>/dev/null || true
+          printf '# %s\n\nVersion %s (build %s)\nPackage %s\n' "$APP_NAME" "$VERSION_NAME" "$VERSION_CODE" "$PKG" > dist/srcpack/README.md
+          (cd dist/srcpack && zip -qr "../$(basename "$SRC")" .)
+          mv -f "dist/$(basename "$SRC")" "$SRC" 2>/dev/null || true
+          if [ ! -f "$SRC" ]; then
+            (cd dist/srcpack && zip -qr "../../$SRC" .) || zip -qr "$SRC" app.config.json
+          fi
+          ls -lh "$SRC" || true
+          echo "source_path=$SRC" >> $GITHUB_OUTPUT
+
       - name: Create GitHub Release
         id: release
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APK_PATH: ${{ steps.validate.outputs.apk_path }}
+          SRC_PATH: ${{ steps.source.outputs.source_path }}
         run: |
           TAG="v${VERSION_NAME}-${VERSION_CODE}"
           TITLE="${APP_NAME} v${VERSION_NAME}"
-          NOTES="Automated build ${VERSION_CODE} for ${PKG} (branch ${GITHUB_REF_NAME}, commit ${GITHUB_SHA})."
+          NOTES="$(cat <<EOF
+          Automated build ${VERSION_CODE} for ${PKG}
+          Branch: ${GITHUB_REF_NAME}
+          Commit: ${GITHUB_SHA}
+          APK: ${APK_PATH}
+          EOF
+          )"
           if [ ! -f "$APK_PATH" ]; then
             echo "::error::APK missing before release: $APK_PATH"
             exit 1
           fi
+          ASSETS=("$APK_PATH")
+          if [ -f "$SRC_PATH" ]; then ASSETS+=("$SRC_PATH"); fi
           for attempt in 1 2 3; do
             echo "::group::Release attempt $attempt for $TAG"
             if gh release view "$TAG" >/dev/null 2>&1; then
-              echo "Release $TAG exists — uploading asset (clobber)"
-              if gh release upload "$TAG" "$APK_PATH" --clobber; then
+              echo "Release $TAG exists — uploading assets (clobber)"
+              if gh release upload "$TAG" "${ASSETS[@]}" --clobber; then
                 echo "::endgroup::"; echo "released=true" >> $GITHUB_OUTPUT; exit 0
               fi
             else
-              if gh release create "$TAG" "$APK_PATH" \
+              if gh release create "$TAG" "${ASSETS[@]}" \
                    --title "$TITLE" --notes "$NOTES" --target "$GITHUB_SHA"; then
                 echo "::endgroup::"; echo "released=true" >> $GITHUB_OUTPUT; exit 0
               fi
