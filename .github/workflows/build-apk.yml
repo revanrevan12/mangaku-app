@@ -10,11 +10,11 @@ on:
       version_name:
         description: 'Version name (mis. 1.0.0)'
         required: false
-        default: '1.2.29'
+        default: '1.2.30'
       version_code:
         description: 'Version code (angka)'
         required: false
-        default: '152'
+        default: '153'
       website_url:
         description: 'URL website yang dibungkus WebView'
         required: false
@@ -26,7 +26,7 @@ on:
       release_tag:
         description: 'Tag GitHub Release'
         required: false
-        default: 'v1.2.29-manual'
+        default: 'v1.2.30-manual'
 
 permissions:
   contents: write
@@ -184,6 +184,33 @@ jobs:
           echo "/opt/gradle-${GRADLE_VER}/bin" >> "$GITHUB_PATH"
           export PATH="/opt/gradle-${GRADLE_VER}/bin:$PATH"
           gradle --version
+
+      # Generate a deterministic debug keystore so the release signing config
+      # (initWith debug) always has a valid keystore to sign with, even when no
+      # release keystore secrets are configured. This guarantees a signed APK
+      # is produced on every build.
+      - name: Generate debug keystore
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.android
+          KEYTOOL=$(which keytool)
+          echo "keytool: ${KEYTOOL}"
+          if [ ! -f ~/.android/debug.keystore ]; then
+            "$KEYTOOL" -genkeypair \
+              -v \
+              -keystore ~/.android/debug.keystore \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+            echo "Debug keystore created at ~/.android/debug.keystore"
+          else
+            echo "Debug keystore already exists"
+          fi
+          ls -la ~/.android/debug.keystore
 
       - name: Build release APK
         run: |
