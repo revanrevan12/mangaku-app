@@ -20,6 +20,7 @@ if (!/^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$/.test(pkg)) {
 const versionName = String(env.VERSION_NAME || cfg.version_name || '1.0.0').replace(/'/g, '');
 const versionCode = Math.max(1, parseInt(env.VERSION_CODE || cfg.version_code || '1', 10) || 1);
 const websiteUrl = String(env.WEBSITE_URL || cfg.website_url || 'https://example.com').trim();
+const logoUrl = String(env.LOGO_URL || cfg.logo_url || '').trim();
 let color = String(cfg.primary_color || '#E23636').trim();
 if (!/^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/.test(color)) color = '#E23636';
 const minSdk = Math.max(21, parseInt(cfg.min_sdk || 24, 10) || 24);
@@ -42,16 +43,51 @@ const xmlEscape = (s) =>
     .replace(/'/g, '&apos;');
 
 const pkgPath = pkg.split('.').join('/');
-const safeUrl = websiteUrl.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+const appUrl =
+  websiteUrl +
+  (websiteUrl.includes('?') ? '&' : '?') +
+  'app=1&app_version=' + encodeURIComponent(versionName) +
+  '&app_code=' + versionCode;
+const safeUrl = appUrl.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 
-try {
-  fs.rmSync('app', { recursive: true, force: true });
-} catch {
-  /* ignore */
+// ——— App icon: prefer the website logo (PNG/JPG), else a vector fallback ———
+let logoDownloaded = false;
+async function downloadLogoIcon() {
+  if (!logoUrl) return false;
+  try {
+    console.log('Downloading app icon from', logoUrl);
+    const r = await fetch(logoUrl, { redirect: 'follow' });
+    if (!r.ok) throw new Error('logo fetch failed: ' + r.status);
+    const ct = String(r.headers.get('content-type') || '').toLowerCase();
+    const buf = Buffer.from(await r.arrayBuffer());
+    if (buf.length < 100) throw new Error('logo too small');
+    // Accept PNG / JPEG / WEBP. SVG cannot be used directly as a raster launcher icon.
+    const isRaster = ct.includes('png') || ct.includes('jpeg') || ct.includes('jpg') || ct.includes('webp') ||
+      buf[0] === 0x89 && buf[1] === 0x50 || buf[0] === 0xff && buf[1] === 0xd8;
+    if (!isRaster) {
+      console.warn('Logo is not a raster image (type=' + ct + '); falling back to vector icon.');
+      return false;
+    }
+    // Write a single high-density PNG; Android scales it down for lower densities.
+    write('app/src/main/res/drawable-nodpi/ic_launcher.png', buf);
+    console.log('App icon set from website logo (' + buf.length + ' bytes).');
+    return true;
+  } catch (e) {
+    console.warn('Logo download failed, using vector fallback:', e.message);
+    return false;
+  }
 }
 
-write(
-  'settings.gradle',
+(async () => {
+  try {
+    fs.rmSync('app', { recursive: true, force: true });
+  } catch {
+    /* ignore */
+  }
+  logoDownloaded = await downloadLogoIcon();
+
+  write(
+    'settings.gradle',
   [
     'pluginManagement {',
     '    repositories {',
@@ -231,9 +267,11 @@ write(
   ].join('\n'),
 );
 
-// Vector drawable launcher icon only (no mipmap XML — avoids AAPT2 MergeResources failures)
-write(
-  'app/src/main/res/drawable/ic_launcher.xml',
+// Vector drawable launcher icon fallback (only when no website logo was downloaded).
+// No mipmap XML — avoids AAPT2 MergeResources failures.
+if (!logoDownloaded) {
+  write(
+    'app/src/main/res/drawable/ic_launcher.xml',
   [
     '<?xml version="1.0" encoding="utf-8"?>',
     '<vector xmlns:android="http://schemas.android.com/apk/res/android"',
@@ -248,11 +286,12 @@ write(
     '        android:fillColor="#FFFFFF"',
     '        android:pathData="M30,30h48v48h-48z" />',
     '</vector>',
-  ].join('\n'),
-);
+    ].join('\n'),
+  );
+}
 
-write(
-  'app/src/main/java/' + pkgPath + '/MainActivity.java',
+  write(
+    'app/src/main/java/' + pkgPath + '/MainActivity.java',
   [
     'package ' + pkg + ';',
     '',
@@ -313,6 +352,11 @@ write(
   ].join('\n'),
 );
 
-console.log(
-  'Android project generated for ' + pkg + ' v' + versionName + ' (' + versionCode + ') url=' + websiteUrl,
-);
+  console.log(
+    'Android project generated for ' + pkg + ' v' + versionName + ' (' + versionCode + ') url=' + websiteUrl +
+      (logoDownloaded ? ' icon=website-logo' : ' icon=vector-fallback'),
+  );
+})().catch((e) => {
+  console.error('gen-android failed:', e);
+  process.exit(1);
+});
