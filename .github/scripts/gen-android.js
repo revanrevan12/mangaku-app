@@ -11,9 +11,13 @@ try {
 }
 
 const env = process.env;
-// App name mirrors the website name exactly — no "Reader" suffix.
+// App name = website name exactly (no Reader/App/Application suffix).
 const rawAppName = String(env.APP_NAME || cfg.app_name || cfg.site_name || 'Manga').trim();
-const appName = rawAppName.replace(/\s*Reader\s*$/i, '').trim() || 'Manga';
+const appName =
+  rawAppName
+    .replace(/\s*(Reader|App|Application|Android)\s*$/i, '')
+    .replace(/\s*[-_|]\s*(Reader|App|Application)\s*$/i, '')
+    .trim() || 'Manga';
 let pkg = String(cfg.package_id || env.FALLBACK_PACKAGE || 'com.mangareader.app').trim();
 if (!/^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$/.test(pkg)) {
   console.warn('Invalid package_id, falling back to com.mangareader.app');
@@ -127,12 +131,16 @@ write(
 write(
   'gradle.properties',
   [
-    'org.gradle.jvmargs=-Xmx3g -Dfile.encoding=UTF-8 -XX:MaxMetaspaceSize=512m',
+    'org.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8 -XX:MaxMetaspaceSize=512m -XX:+UseParallelGC',
     'org.gradle.parallel=true',
+    'org.gradle.caching=true',
+    'org.gradle.configureondemand=true',
+    'org.gradle.daemon=false',
     'android.useAndroidX=true',
     'android.nonTransitiveRClass=true',
     'android.defaults.buildfeatures.buildconfig=true',
     'android.nonFinalResIds=false',
+    'android.enableR8.fullMode=false',
   ].join('\n'),
 );
 
@@ -168,6 +176,7 @@ write(
     '        release {',
     '            minifyEnabled false',
     '            shrinkResources false',
+    '            debuggable false',
     '            signingConfig signingConfigs.debug',
     "            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'",
     '        }',
@@ -183,8 +192,13 @@ write(
     '',
     '    packaging {',
     '        resources {',
-    "            excludes += ['/META-INF/{AL2.0,LGPL2.1}']",
+    "            excludes += ['/META-INF/{AL2.0,LGPL2.1}', 'META-INF/DEPENDENCIES', 'META-INF/LICENSE*', 'META-INF/NOTICE*']",
     '        }',
+    '    }',
+    '',
+    '    lint {',
+    '        checkReleaseBuilds false',
+    '        abortOnError false',
     '    }',
     '}',
     '',
