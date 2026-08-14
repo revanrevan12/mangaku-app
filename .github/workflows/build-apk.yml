@@ -6,15 +6,15 @@ on:
       app_name:
         description: 'Nama aplikasi'
         required: false
-        default: 'MangaKu'
+        default: 'MANGAKU'
       version_name:
         description: 'Version name (mis. 1.0.0)'
         required: false
-        default: '1.2.6'
+        default: '1.2.7'
       version_code:
         description: 'Version code (angka)'
         required: false
-        default: '129'
+        default: '130'
       website_url:
         description: 'URL website yang dibungkus WebView'
         required: false
@@ -26,7 +26,7 @@ on:
       release_tag:
         description: 'Tag GitHub Release'
         required: false
-        default: 'v1.2.6-manual'
+        default: 'v1.2.7-manual'
 
 permissions:
   contents: write
@@ -49,6 +49,7 @@ jobs:
           sparse-checkout: |
             .github
             apk-config.json
+            apk-icon.b64
           sparse-checkout-cone-mode: false
 
       - name: Setup Node.js
