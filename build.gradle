@@ -1,21 +1,4 @@
-// Top-level build file
-buildscript {
-    repositories {
-        google()
-        mavenCentral()
-    }
-    dependencies {
-        classpath 'com.android.tools.build:gradle:8.2.2'
-    }
-}
-
-allprojects {
-    repositories {
-        google()
-        mavenCentral()
-    }
-}
-
-tasks.register('clean', Delete) {
-    delete rootProject.buildDir
+// Root build file — plugin versions pinned so dependency resolution is deterministic.
+plugins {
+    id 'com.android.application' version '8.5.2' apply false
 }
