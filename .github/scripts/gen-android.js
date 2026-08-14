@@ -314,14 +314,20 @@ function writeVectorIcon() {
     ].join('\n'),
   );
 
+  // Platform Theme.Material attributes use the android: namespace.
+  // Bare colorPrimary / colorPrimaryDark / colorAccent are AppCompat-only
+  // and fail resource merge when dependencies {} is empty (no AndroidX).
   writeText(
     'app/src/main/res/values/colors.xml',
     [
       '<?xml version="1.0" encoding="utf-8"?>',
       '<resources>',
       '    <color name="primary">' + color + '</color>',
+      '    <color name="primary_dark">' + color + '</color>',
+      '    <color name="accent">' + color + '</color>',
       '    <color name="black">#FF000000</color>',
       '    <color name="white">#FFFFFFFF</color>',
+      '    <color name="window_background">#FF000000</color>',
       '</resources>',
     ].join('\n'),
   );
@@ -331,13 +337,15 @@ function writeVectorIcon() {
     [
       '<?xml version="1.0" encoding="utf-8"?>',
       '<resources>',
-      '    <style name="Theme.MangaApp" parent="@android:style/Theme.Material.NoActionBar">',
-      '        <item name="colorPrimary">@color/primary</item>',
-      '        <item name="colorPrimaryDark">@color/primary</item>',
-      '        <item name="colorAccent">@color/primary</item>',
-      '        <item name="android:statusBarColor">@color/primary</item>',
+      '    <style name="Theme.MangaApp" parent="@android:style/Theme.Material.Light.NoActionBar">',
+      '        <item name="android:colorPrimary">@color/primary</item>',
+      '        <item name="android:colorPrimaryDark">@color/primary_dark</item>',
+      '        <item name="android:colorAccent">@color/accent</item>',
+      '        <item name="android:statusBarColor">@color/primary_dark</item>',
       '        <item name="android:navigationBarColor">@color/black</item>',
-      '        <item name="android:windowBackground">@color/black</item>',
+      '        <item name="android:windowBackground">@color/window_background</item>',
+      '        <item name="android:windowDrawsSystemBarBackgrounds">true</item>',
+      '        <item name="android:textColorPrimary">@color/white</item>',
       '    </style>',
       '</resources>',
     ].join('\n'),
@@ -431,6 +439,7 @@ function writeVectorIcon() {
     'app/build.gradle',
     'app/src/main/AndroidManifest.xml',
     'app/src/main/res/values/strings.xml',
+    'app/src/main/res/values/colors.xml',
     'app/src/main/res/values/themes.xml',
     'app/src/main/res/layout/activity_main.xml',
     'app/src/main/java/' + pkgPath + '/MainActivity.java',
@@ -438,6 +447,22 @@ function writeVectorIcon() {
   for (const f of mustExist) {
     if (!fs.existsSync(f)) {
       console.error('Missing required file after generate:', f);
+      process.exit(1);
+    }
+  }
+
+  // Guard against AppCompat-only theme attrs (no AndroidX on the classpath).
+  const themesBody = fs.readFileSync('app/src/main/res/values/themes.xml', 'utf8');
+  if (/(?:name="colorPrimary"|name="colorPrimaryDark"|name="colorAccent")/.test(themesBody)) {
+    console.error(
+      'themes.xml still references AppCompat attrs (colorPrimary/colorPrimaryDark/colorAccent). Use android:color* instead.',
+    );
+    process.exit(1);
+  }
+  const colorsBody = fs.readFileSync('app/src/main/res/values/colors.xml', 'utf8');
+  for (const c of ['primary', 'primary_dark', 'accent', 'black', 'white']) {
+    if (!new RegExp('name="' + c + '"').test(colorsBody)) {
+      console.error('colors.xml missing color:', c);
       process.exit(1);
     }
   }
