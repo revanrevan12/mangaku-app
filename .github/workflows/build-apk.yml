@@ -6,7 +6,7 @@ on:
       version_name:
         description: 'Version name'
         required: false
-        default: '1.2.5'
+        default: '1.2.9'
   push:
     branches: [ 'main' ]
     paths:
@@ -212,18 +212,49 @@ jobs:
           - APK: $(basename "$APK_PATH") (${SIZE_MB} MB, zipaligned, v1+v2+v3 signed)
           - Commit: ${GITHUB_SHA}
           - Content served live from the website API — no rebuild needed for new manga."
+          # Sanity-check the APK before publishing it.
+          test -f "$APK_PATH" || { echo "::error::APK missing at $APK_PATH"; exit 1; }
+          APK_SIZE=$(stat -c%s "$APK_PATH")
+          [ "$APK_SIZE" -gt 1048576 ] || { echo "::error::APK smaller than 1 MB ($APK_SIZE bytes) — refusing to publish"; exit 1; }
+          unzip -t "$APK_PATH" > /dev/null || { echo "::error::APK is not a valid ZIP container"; exit 1; }
+          echo "::notice::publishing $(basename "$APK_PATH") ($APK_SIZE bytes) to release $TAG"
+
           ASSETS=("$APK_PATH")
           [ -f "$SRC_PATH" ] && ASSETS+=("$SRC_PATH")
+
+          # 1. Ensure the release exists (created WITHOUT assets so upload is a separate, retryable step).
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --title "$TITLE" --notes "$NOTES" --target "$GITHUB_SHA" \
+              || echo "::warning::release create failed — it may already exist"
+          fi
+          gh release view "$TAG" >/dev/null 2>&1 || {
+            echo "::error::release $TAG could not be created — enable Settings → Actions → Workflow permissions → Read and write"
+            exit 1
+          }
+
+          # 2. Upload assets with retries, then verify the APK is actually listed.
           for attempt in 1 2 3; do
-            if gh release view "$TAG" >/dev/null 2>&1; then
-              gh release upload "$TAG" "${ASSETS[@]}" --clobber && exit 0
+            if gh release upload "$TAG" "${ASSETS[@]}" --clobber; then
+              echo "::notice::asset upload attempt $attempt succeeded"
             else
-              gh release create "$TAG" "${ASSETS[@]}" --title "$TITLE" --notes "$NOTES" --target "$GITHUB_SHA" && exit 0
+              echo "::warning::asset upload attempt $attempt failed"
             fi
-            echo "::warning::release attempt $attempt failed — retrying"
+            APK_NAME="$(basename "$APK_PATH")"
+            gh release view "$TAG" --json assets --jq '.assets[].name' > assets.txt 2>/dev/null || true
+            echo "Assets currently on $TAG:"; cat assets.txt || true
+            if grep -qx "$APK_NAME" assets.txt; then
+              UPLOADED_SIZE=$(gh release view "$TAG" --json assets --jq ".assets[] | select(.name==\"$APK_NAME\") | .size")
+              echo "::notice::APK verified in release assets: $APK_NAME ($UPLOADED_SIZE bytes)"
+              if [ "${UPLOADED_SIZE:-0}" -gt 1048576 ]; then
+                exit 0
+              fi
+              echo "::warning::uploaded APK size $UPLOADED_SIZE looks wrong — retrying"
+              gh release delete-asset "$TAG" "$APK_NAME" -y || true
+            fi
+            echo "::warning::APK not yet visible in release assets — retrying"
             sleep $((attempt * 10))
           done
-          echo "::error::Release failed after 3 attempts — enable Settings → Actions → Workflow permissions → Read and write"
+          echo "::error::APK upload to release $TAG failed after 3 attempts — check token/workflow permissions (contents: write)"
           exit 1
 
       - name: Build summary
