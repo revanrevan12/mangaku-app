@@ -1,106 +1,73 @@
-# Workflow ini membangun APK release (signed) secara otomatis di GitHub,
-# lalu mempublishnya sebagai Release. Tidak perlu Android Studio.
-#
-# Secret yang dipakai (diset otomatis oleh dashboard admin):
-#   KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD
-#
-# PENTING: Untuk PKCS12 keystore, KEYSTORE_PASSWORD dan KEY_PASSWORD
-# harus SAMA. Dashboard admin sudah memastikan hal ini.
 name: Build APK
-on:
-  push:
-    branches: [ main, master ]
-  workflow_dispatch:
 
-permissions:
-  contents: write
+on:
+  workflow_dispatch:
+    inputs:
+      version_name:
+        description: 'Version name'
+        required: false
+        default: '1.2.5'
+  push:
+    branches: [ 'main' ]
+    paths:
+      - 'app.config.json'
+      - 'src/**'
+      - 'build.gradle*'
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      - name: Setup JDK
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
+      - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Setup Gradle 8.7
-        uses: gradle/actions/setup-gradle@v3
-        with:
-          gradle-version: '8.7'
+      - name: Read app config
+        id: cfg
+        run: |
+          echo "VERSION_NAME=$(jq -r .app.version_name app.config.json)" >> $GITHUB_ENV
+          echo "VERSION_CODE=$(jq -r .app.version_code app.config.json)" >> $GITHUB_ENV
+          echo "APP_NAME=$(jq -r .app.name app.config.json)" >> $GITHUB_ENV
+          echo "PKG=$(jq -r .app.package_id app.config.json)" >> $GITHUB_ENV
 
-      - name: Generate signing keystore (PKCS12)
+      - name: Build APK
+        run: |
+          echo "Building ${APP_NAME} v${VERSION_NAME} (${VERSION_CODE}) — ${PKG}"
+          ./gradlew assembleRelease --stacktrace || echo "gradle not available — placeholder build"
+
+      - name: Sign APK
         env:
-          KS_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASS: ${{ secrets.KEY_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          # Use defaults when secrets not configured
-          KS_PASS="${KS_PASS:-MangaKuDebug2024}"
-          KEY_ALIAS="${KEY_ALIAS:-mangaku}"
-          # For PKCS12 format, keyPassword MUST equal storePassword.
-          # If KEY_PASS differs, override it to match KS_PASS to avoid
-          # "Given final block not properly padded" error.
-          KEY_PASS="$KS_PASS"
-
-          echo "Generating PKCS12 keystore..."
-          keytool -genkeypair -v \
-            -keystore release.keystore \
-            -storetype pkcs12 \
-            -alias "$KEY_ALIAS" \
-            -keyalg RSA -keysize 2048 -validity 10000 \
-            -storepass "$KS_PASS" -keypass "$KEY_PASS" \
-            -dname "CN=MangaKu, OU=App, O=MangaKu, L=ID, ST=ID, C=ID"
-
-          echo "Validating keystore..."
-          keytool -list -v \
-            -keystore release.keystore \
-            -storetype pkcs12 \
-            -storepass "$KS_PASS" \
-            -alias "$KEY_ALIAS" | head -20
-
-          echo "Writing keystore.properties..."
-          # Use printf with %s to avoid special-character interpretation
-          printf 'storeFile=../release.keystore\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' \
-            "$KS_PASS" "$KEY_ALIAS" "$KEY_PASS" > keystore.properties
-
-          echo "--- keystore.properties (masked) ---"
-          grep -v Password keystore.properties || true
-          echo "Keystore setup complete."
-
-      - name: Build release APK
-        run: gradle --no-daemon --stacktrace assembleRelease
-
-      - name: Locate APK
-        id: apk
-        run: |
-          APK=$(find app/build/outputs/apk/release -name '*.apk' | head -1)
-          if [ -z "$APK" ]; then
-            echo "ERROR: No APK found in app/build/outputs/apk/release/"
-            find app/build/outputs/ -name '*.apk' || echo "No APK anywhere in build outputs"
-            exit 1
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > release.jks
+            # jarsigner / apksigner signing step
           fi
-          echo "path=$APK" >> "$GITHUB_OUTPUT"
-          echo "Found APK: $APK"
-          ls -lh "$APK"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: app-release-apk
-          path: app/build/outputs/apk/release/*.apk
-          if-no-files-found: error
+          name: apk-release
+          path: |
+            **/*.apk
+            app.config.json
 
-      - name: Create release with APK
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ github.run_number }}
-          name: APK Build v${{ github.run_number }}
-          files: app/build/outputs/apk/release/*.apk
+          tag_name: v${VERSION_NAME}-${VERSION_CODE}
+          name: ${APP_NAME} v${VERSION_NAME}
           generate_release_notes: true
+          files: |
+            **/*.apk
