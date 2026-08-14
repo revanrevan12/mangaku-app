@@ -1,0 +1,25 @@
+{
+  "app": {
+    "name": "Manga Reader",
+    "package_id": "com.mangareader.app",
+    "version_name": "1.2.5",
+    "version_code": 125,
+    "min_sdk": 21,
+    "target_sdk": 34,
+    "architecture": "armv7_arm64",
+    "build_mode": "release"
+  },
+  "branding": {
+    "app_name": "MangaKu",
+    "description": "Website baca manga online terbaik dan gratis",
+    "theme_color": "#EF4444",
+    "background_color": "#0F172A",
+    "logo_url": ""
+  },
+  "api": {
+    "endpoint": "8e72783a-c5b0-4605-b01a-89434796e075.app-preview.com",
+    "manga_base": "8e72783a-c5b0-4605-b01a-89434796e075.app-preview.com/hcgi/api/manga",
+    "pocketbase": "8e72783a-c5b0-4605-b01a-89434796e075.app-preview.com"
+  },
+  "built_at": "2026-08-14T03:40:46.629Z"
+}
