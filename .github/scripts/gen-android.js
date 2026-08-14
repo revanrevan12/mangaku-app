@@ -142,7 +142,7 @@ function readPngIhdr(buf) {
  * Returns icon resource ref: '@mipmap/ic_launcher' or '@drawable/ic_launcher'.
  */
 function installLauncherIcon() {
-  const MAX_BYTES = 512 * 1024;
+  const MAX_BYTES = 2 * 1024 * 1024;
   const MAX_DIM = 2048;
 
   let pngBuf = null;
