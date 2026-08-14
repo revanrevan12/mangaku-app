@@ -2,10 +2,10 @@
   "app_name": "MANGAKU",
   "site_name": "MANGAKU",
   "package_id": "com.mangareader.app",
-  "version_name": "1.2.35",
-  "version_code": 158,
+  "version_name": "1.2.36",
+  "version_code": 159,
   "website_url": "https://8e72783a-c5b0-4605-b01a-89434796e075.app-preview.com",
-  "logo_url": "http://localhost:8090/api/files/site_settings/5rxkcf9mkd1n0zl/1000223005_kro735u4kc.png",
+  "logo_url": "http://localhost:8090/api/files/site_settings/5rxkcf9mkd1n0zl/1000223002_xc8wliwkrw.png",
   "primary_color": "#e23636",
   "min_sdk": 21,
   "target_sdk": 34
