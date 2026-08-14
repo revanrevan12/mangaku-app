@@ -6,15 +6,15 @@ on:
       app_name:
         description: 'Nama aplikasi'
         required: false
-        default: 'Manga Reader'
+        default: 'Manga'
       version_name:
         description: 'Version name (mis. 1.0.0)'
         required: false
-        default: '1.2.5'
+        default: '1.2.4'
       version_code:
         description: 'Version code (angka)'
         required: false
-        default: '126'
+        default: '127'
       website_url:
         description: 'URL website yang dibungkus WebView'
         required: false
@@ -26,7 +26,7 @@ on:
       release_tag:
         description: 'Tag GitHub Release'
         required: false
-        default: 'v1.2.5-manual'
+        default: 'v1.2.4-manual'
 
 permissions:
   contents: write
