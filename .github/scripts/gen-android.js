@@ -36,11 +36,17 @@ const minSdk = Math.max(21, parseInt(cfg.min_sdk || 24, 10) || 24);
 const targetSdk = Math.min(34, Math.max(minSdk, parseInt(cfg.target_sdk || 34, 10) || 34));
 const compileSdk = 34;
 
-const write = (p, content) => {
+const writeText = (p, content) => {
   fs.mkdirSync(path.dirname(p), { recursive: true });
   const body = String(content);
   fs.writeFileSync(p, body.endsWith('\n') ? body : body + '\n', 'utf8');
   console.log('wrote', p);
+};
+
+const writeBinary = (p, buf) => {
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  fs.writeFileSync(p, buf);
+  console.log('wrote binary', p, '(' + buf.length + ' bytes)');
 };
 
 const xmlEscape = (s) =>
@@ -55,12 +61,26 @@ const pkgPath = pkg.split('.').join('/');
 const appUrl =
   websiteUrl +
   (websiteUrl.includes('?') ? '&' : '?') +
-  'app=1&app_version=' + encodeURIComponent(versionName) +
-  '&app_code=' + versionCode;
+  'app=1&app_version=' +
+  encodeURIComponent(versionName) +
+  '&app_code=' +
+  versionCode;
 const safeUrl = appUrl.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 
-// ——— App icon: prefer the website logo (PNG/JPG), else a vector fallback ———
+// ——— App icon: prefer the website logo (PNG), else a vector fallback ———
 let logoDownloaded = false;
+
+function isPng(buf) {
+  return (
+    buf &&
+    buf.length >= 100 &&
+    buf[0] === 0x89 &&
+    buf[1] === 0x50 &&
+    buf[2] === 0x4e &&
+    buf[3] === 0x47
+  );
+}
+
 function localLogoIcon() {
   // Preferred path: the server committed the website logo as base64 (apk-icon.b64)
   // because PocketBase file URLs are not reachable from GitHub runners.
@@ -69,8 +89,11 @@ function localLogoIcon() {
     const b64 = fs.readFileSync('apk-icon.b64', 'utf8').replace(/\s+/g, '');
     if (b64.length < 100) return false;
     const buf = Buffer.from(b64, 'base64');
-    if (buf.length < 100) return false;
-    write('app/src/main/res/drawable-nodpi/ic_launcher.png', buf);
+    if (!isPng(buf)) {
+      console.warn('apk-icon.b64 is not a valid PNG; using vector fallback.');
+      return false;
+    }
+    writeBinary('app/src/main/res/drawable-nodpi/ic_launcher.png', buf);
     console.log('App icon set from committed website logo (' + buf.length + ' bytes).');
     return true;
   } catch (e) {
@@ -86,22 +109,17 @@ async function downloadLogoIcon() {
     console.log('Downloading app icon from', logoUrl);
     const r = await fetch(logoUrl, { redirect: 'follow' });
     if (!r.ok) throw new Error('logo fetch failed: ' + r.status);
-    const ct = String(r.headers.get('content-type') || '').toLowerCase();
     const buf = Buffer.from(await r.arrayBuffer());
-    if (buf.length < 100) throw new Error('logo too small');
-    const MAX_LOGO_BYTES = 3 * 1024 * 1024;
-    if (buf.length > MAX_LOGO_BYTES) {
-      console.warn('Logo is ' + buf.length + ' bytes (> 3MB); using it as-is may bloat the APK.');
-    }
-    // Accept PNG / JPEG / WEBP. SVG cannot be used directly as a raster launcher icon.
-    const isRaster = ct.includes('png') || ct.includes('jpeg') || ct.includes('jpg') || ct.includes('webp') ||
-      buf[0] === 0x89 && buf[1] === 0x50 || buf[0] === 0xff && buf[1] === 0xd8;
-    if (!isRaster) {
-      console.warn('Logo is not a raster image (type=' + ct + '); falling back to vector icon.');
+    if (!isPng(buf)) {
+      console.warn('Logo is not PNG; using vector fallback.');
       return false;
     }
-    // Write a single high-density PNG; Android scales it down for lower densities.
-    write('app/src/main/res/drawable-nodpi/ic_launcher.png', buf);
+    const MAX_LOGO_BYTES = 3 * 1024 * 1024;
+    if (buf.length > MAX_LOGO_BYTES) {
+      console.warn('Logo is ' + buf.length + ' bytes (> 3MB); skipping oversized icon.');
+      return false;
+    }
+    writeBinary('app/src/main/res/drawable-nodpi/ic_launcher.png', buf);
     console.log('App icon set from website logo (' + buf.length + ' bytes).');
     return true;
   } catch (e) {
@@ -118,285 +136,316 @@ async function downloadLogoIcon() {
   }
   logoDownloaded = await downloadLogoIcon();
 
-  write(
+  writeText(
     'settings.gradle',
-  [
-    'pluginManagement {',
-    '    repositories {',
-    '        google()',
-    '        mavenCentral()',
-    '        gradlePluginPortal()',
-    '    }',
-    '}',
-    'dependencyResolutionManagement {',
-    '    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)',
-    '    repositories {',
-    '        google()',
-    '        mavenCentral()',
-    '    }',
-    '}',
-    "rootProject.name = 'MangaApp'",
-    "include ':app'",
-  ].join('\n'),
-);
-
-// AGP 8.2.2 + Gradle 8.7 is a stable pair for CI WebView shells
-write(
-  'build.gradle',
-  [
-    'plugins {',
-    "    id 'com.android.application' version '8.2.2' apply false",
-    '}',
-  ].join('\n'),
-);
-
-write(
-  'gradle.properties',
-  [
-    'org.gradle.jvmargs=-Xmx3g -Dfile.encoding=UTF-8 -XX:MaxMetaspaceSize=768m',
-    'org.gradle.parallel=false',
-    'org.gradle.caching=true',
-    'org.gradle.configureondemand=false',
-    'org.gradle.daemon=false',
-    'org.gradle.workers.max=2',
-    'org.gradle.vfs.watch=false',
-    'android.useAndroidX=true',
-    'android.nonTransitiveRClass=true',
-    'android.defaults.buildfeatures.buildconfig=true',
-    'android.nonFinalResIds=false',
-    'android.enableR8.fullMode=false',
-  ].join('\n'),
-);
-
-const sdkDir = String(process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT || '').replace(
-  /\\/g,
-  '\\\\',
-);
-if (sdkDir) {
-  write('local.properties', 'sdk.dir=' + sdkDir);
-}
-
-write(
-  'app/build.gradle',
-  [
-    'plugins {',
-    "    id 'com.android.application'",
-    '}',
-    '',
-    'android {',
-    "    namespace '" + pkg + "'",
-    '    compileSdk ' + compileSdk,
-    '',
-    '    defaultConfig {',
-    "        applicationId '" + pkg + "'",
-    '        minSdk ' + minSdk,
-    '        targetSdk ' + targetSdk,
-    '        versionCode ' + versionCode,
-    "        versionName '" + versionName + "'",
-    '        vectorDrawables.useSupportLibrary = true',
-    '    }',
-    '',
-    '    buildTypes {',
-    '        release {',
-    '            minifyEnabled false',
-    '            shrinkResources false',
-    '            debuggable false',
-    '            signingConfig signingConfigs.getByName("debug")',
-    '        }',
-    '        debug {',
-    '            minifyEnabled false',
-    '        }',
-    '    }',
-    '',
-    '    compileOptions {',
-    '        sourceCompatibility JavaVersion.VERSION_17',
-    '        targetCompatibility JavaVersion.VERSION_17',
-    '    }',
-    '',
-    '    packaging {',
-    '        resources {',
-    "            excludes += ['/META-INF/{AL2.0,LGPL2.1}', 'META-INF/DEPENDENCIES', 'META-INF/LICENSE*', 'META-INF/NOTICE*']",
-    '        }',
-    '    }',
-    '',
-    '    lint {',
-    '        checkReleaseBuilds false',
-    '        abortOnError false',
-    '    }',
-    '}',
-    '',
-    'dependencies {',
-    "    implementation 'androidx.appcompat:appcompat:1.6.1'",
-    "    implementation 'androidx.webkit:webkit:1.11.0'",
-    '}',
-  ].join('\n'),
-);
-
-write(
-  'app/proguard-rules.pro',
-  '# WebView\n-keepclassmembers class * {\n    @android.webkit.JavascriptInterface <methods>;\n}\n',
-);
-
-write(
-  'app/src/main/AndroidManifest.xml',
-  [
-    '<?xml version="1.0" encoding="utf-8"?>',
-    '<manifest xmlns:android="http://schemas.android.com/apk/res/android">',
-    '',
-    '    <uses-permission android:name="android.permission.INTERNET" />',
-    '    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />',
-    '',
-    '    <application',
-    '        android:allowBackup="true"',
-    '        android:icon="@drawable/ic_launcher"',
-    '        android:roundIcon="@drawable/ic_launcher"',
-    '        android:label="@string/app_name"',
-    '        android:supportsRtl="true"',
-    '        android:theme="@style/Theme.MangaApp"',
-    '        android:usesCleartextTraffic="true">',
-    '',
-    '        <activity',
-    '            android:name=".MainActivity"',
-    '            android:exported="true"',
-    '            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize"',
-    '            android:launchMode="singleTask"',
-    '            android:windowSoftInputMode="adjustResize">',
-    '            <intent-filter>',
-    '                <action android:name="android.intent.action.MAIN" />',
-    '                <category android:name="android.intent.category.LAUNCHER" />',
-    '            </intent-filter>',
-    '        </activity>',
-    '    </application>',
-    '</manifest>',
-  ].join('\n'),
-);
-
-write(
-  'app/src/main/res/values/strings.xml',
-  [
-    '<?xml version="1.0" encoding="utf-8"?>',
-    '<resources>',
-    '    <string name="app_name">' + xmlEscape(appName) + '</string>',
-    '</resources>',
-  ].join('\n'),
-);
-
-write(
-  'app/src/main/res/values/colors.xml',
-  [
-    '<?xml version="1.0" encoding="utf-8"?>',
-    '<resources>',
-    '    <color name="primary">' + color + '</color>',
-    '    <color name="black">#FF000000</color>',
-    '    <color name="white">#FFFFFFFF</color>',
-    '</resources>',
-  ].join('\n'),
-);
-
-write(
-  'app/src/main/res/values/themes.xml',
-  [
-    '<?xml version="1.0" encoding="utf-8"?>',
-    '<resources>',
-    '    <style name="Theme.MangaApp" parent="Theme.AppCompat.DayNight.NoActionBar">',
-    '        <item name="colorPrimary">@color/primary</item>',
-    '        <item name="colorPrimaryDark">@color/primary</item>',
-    '        <item name="colorAccent">@color/primary</item>',
-    '        <item name="android:statusBarColor">@color/primary</item>',
-    '        <item name="android:navigationBarColor">@color/black</item>',
-    '        <item name="android:windowBackground">@color/black</item>',
-    '    </style>',
-    '</resources>',
-  ].join('\n'),
-);
-
-// Vector drawable launcher icon fallback (only when no website logo was downloaded).
-// No mipmap XML — avoids AAPT2 MergeResources failures.
-if (!logoDownloaded) {
-  write(
-    'app/src/main/res/drawable/ic_launcher.xml',
-  [
-    '<?xml version="1.0" encoding="utf-8"?>',
-    '<vector xmlns:android="http://schemas.android.com/apk/res/android"',
-    '    android:width="108dp"',
-    '    android:height="108dp"',
-    '    android:viewportWidth="108"',
-    '    android:viewportHeight="108">',
-    '    <path',
-    '        android:fillColor="' + color + '"',
-    '        android:pathData="M0,0h108v108h-108z" />',
-    '    <path',
-    '        android:fillColor="#FFFFFF"',
-    '        android:pathData="M30,30h48v48h-48z" />',
-    '</vector>',
+    [
+      'pluginManagement {',
+      '    repositories {',
+      '        google()',
+      '        mavenCentral()',
+      '        gradlePluginPortal()',
+      '    }',
+      '}',
+      'dependencyResolutionManagement {',
+      '    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)',
+      '    repositories {',
+      '        google()',
+      '        mavenCentral()',
+      '    }',
+      '}',
+      "rootProject.name = 'MangaApp'",
+      "include ':app'",
     ].join('\n'),
   );
-}
 
-  write(
+  // AGP 8.5.2 + Gradle 8.9 — stable on GitHub ubuntu-latest runners
+  writeText(
+    'build.gradle',
+    [
+      'plugins {',
+      "    id 'com.android.application' version '8.5.2' apply false",
+      '}',
+    ].join('\n'),
+  );
+
+  writeText(
+    'gradle.properties',
+    [
+      'org.gradle.jvmargs=-Xmx3g -Dfile.encoding=UTF-8 -XX:MaxMetaspaceSize=512m -XX:+HeapDumpOnOutOfMemoryError',
+      'org.gradle.parallel=false',
+      'org.gradle.caching=true',
+      'org.gradle.configureondemand=false',
+      'org.gradle.daemon=false',
+      'org.gradle.workers.max=1',
+      'org.gradle.vfs.watch=false',
+      'android.useAndroidX=true',
+      'android.nonTransitiveRClass=true',
+      'android.defaults.buildfeatures.buildconfig=true',
+      'android.nonFinalResIds=false',
+      'android.enableR8.fullMode=false',
+    ].join('\n'),
+  );
+
+  writeText(
+    'gradle/wrapper/gradle-wrapper.properties',
+    [
+      'distributionBase=GRADLE_USER_HOME',
+      'distributionPath=wrapper/dists',
+      'distributionUrl=https\\://services.gradle.org/distributions/gradle-8.9-bin.zip',
+      'networkTimeout=10000',
+      'validateDistributionUrl=true',
+      'zipStoreBase=GRADLE_USER_HOME',
+      'zipStorePath=wrapper/dists',
+    ].join('\n'),
+  );
+
+  const sdkDir = String(process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT || '').replace(
+    /\\/g,
+    '\\\\',
+  );
+  if (sdkDir) {
+    writeText('local.properties', 'sdk.dir=' + sdkDir);
+  }
+
+  writeText(
+    'app/build.gradle',
+    [
+      'plugins {',
+      "    id 'com.android.application'",
+      '}',
+      '',
+      'android {',
+      "    namespace '" + pkg + "'",
+      '    compileSdk ' + compileSdk,
+      '',
+      '    defaultConfig {',
+      "        applicationId '" + pkg + "'",
+      '        minSdk ' + minSdk,
+      '        targetSdk ' + targetSdk,
+      '        versionCode ' + versionCode,
+      "        versionName '" + versionName + "'",
+      '        vectorDrawables.useSupportLibrary = true',
+      '    }',
+      '',
+      '    signingConfigs {',
+      '        release {',
+      '            initWith debug',
+      '        }',
+      '    }',
+      '',
+      '    buildTypes {',
+      '        release {',
+      '            minifyEnabled false',
+      '            shrinkResources false',
+      '            debuggable false',
+      '            signingConfig signingConfigs.release',
+      '        }',
+      '        debug {',
+      '            minifyEnabled false',
+      '            debuggable true',
+      '        }',
+      '    }',
+      '',
+      '    compileOptions {',
+      '        sourceCompatibility JavaVersion.VERSION_17',
+      '        targetCompatibility JavaVersion.VERSION_17',
+      '    }',
+      '',
+      '    packaging {',
+      '        resources {',
+      "            excludes += ['/META-INF/{AL2.0,LGPL2.1}', 'META-INF/DEPENDENCIES', 'META-INF/LICENSE*', 'META-INF/NOTICE*']",
+      '        }',
+      '    }',
+      '',
+      '    lint {',
+      '        checkReleaseBuilds false',
+      '        abortOnError false',
+      '    }',
+      '',
+      '    buildFeatures {',
+      '        buildConfig true',
+      '    }',
+      '}',
+      '',
+      'dependencies {',
+      "    implementation 'androidx.appcompat:appcompat:1.7.0'",
+      "    implementation 'androidx.webkit:webkit:1.12.1'",
+      '}',
+    ].join('\n'),
+  );
+
+  writeText(
+    'app/proguard-rules.pro',
+    '# WebView\n-keepclassmembers class * {\n    @android.webkit.JavascriptInterface <methods>;\n}\n',
+  );
+
+  writeText(
+    'app/src/main/AndroidManifest.xml',
+    [
+      '<?xml version="1.0" encoding="utf-8"?>',
+      '<manifest xmlns:android="http://schemas.android.com/apk/res/android">',
+      '',
+      '    <uses-permission android:name="android.permission.INTERNET" />',
+      '    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />',
+      '',
+      '    <application',
+      '        android:allowBackup="true"',
+      '        android:icon="@drawable/ic_launcher"',
+      '        android:roundIcon="@drawable/ic_launcher"',
+      '        android:label="@string/app_name"',
+      '        android:supportsRtl="true"',
+      '        android:theme="@style/Theme.MangaApp"',
+      '        android:usesCleartextTraffic="true">',
+      '',
+      '        <activity',
+      '            android:name=".MainActivity"',
+      '            android:exported="true"',
+      '            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize"',
+      '            android:launchMode="singleTask"',
+      '            android:windowSoftInputMode="adjustResize">',
+      '            <intent-filter>',
+      '                <action android:name="android.intent.action.MAIN" />',
+      '                <category android:name="android.intent.category.LAUNCHER" />',
+      '            </intent-filter>',
+      '        </activity>',
+      '    </application>',
+      '</manifest>',
+    ].join('\n'),
+  );
+
+  writeText(
+    'app/src/main/res/values/strings.xml',
+    [
+      '<?xml version="1.0" encoding="utf-8"?>',
+      '<resources>',
+      '    <string name="app_name">' + xmlEscape(appName) + '</string>',
+      '</resources>',
+    ].join('\n'),
+  );
+
+  writeText(
+    'app/src/main/res/values/colors.xml',
+    [
+      '<?xml version="1.0" encoding="utf-8"?>',
+      '<resources>',
+      '    <color name="primary">' + color + '</color>',
+      '    <color name="black">#FF000000</color>',
+      '    <color name="white">#FFFFFFFF</color>',
+      '</resources>',
+    ].join('\n'),
+  );
+
+  writeText(
+    'app/src/main/res/values/themes.xml',
+    [
+      '<?xml version="1.0" encoding="utf-8"?>',
+      '<resources>',
+      '    <style name="Theme.MangaApp" parent="Theme.AppCompat.DayNight.NoActionBar">',
+      '        <item name="colorPrimary">@color/primary</item>',
+      '        <item name="colorPrimaryDark">@color/primary</item>',
+      '        <item name="colorAccent">@color/primary</item>',
+      '        <item name="android:statusBarColor">@color/primary</item>',
+      '        <item name="android:navigationBarColor">@color/black</item>',
+      '        <item name="android:windowBackground">@color/black</item>',
+      '    </style>',
+      '</resources>',
+    ].join('\n'),
+  );
+
+  // Only ONE ic_launcher resource (PNG XOR vector) to avoid AAPT2 duplicate errors.
+  if (!logoDownloaded) {
+    writeText(
+      'app/src/main/res/drawable/ic_launcher.xml',
+      [
+        '<?xml version="1.0" encoding="utf-8"?>',
+        '<vector xmlns:android="http://schemas.android.com/apk/res/android"',
+        '    android:width="108dp"',
+        '    android:height="108dp"',
+        '    android:viewportWidth="108"',
+        '    android:viewportHeight="108">',
+        '    <path',
+        '        android:fillColor="' + color + '"',
+        '        android:pathData="M0,0h108v108h-108z" />',
+        '    <path',
+        '        android:fillColor="#FFFFFF"',
+        '        android:pathData="M30,30h48v48h-48z" />',
+        '</vector>',
+      ].join('\n'),
+    );
+  }
+
+  writeText(
     'app/src/main/java/' + pkgPath + '/MainActivity.java',
-  [
-    'package ' + pkg + ';',
-    '',
-    'import android.annotation.SuppressLint;',
-    'import android.os.Bundle;',
-    'import android.webkit.WebChromeClient;',
-    'import android.webkit.WebSettings;',
-    'import android.webkit.WebView;',
-    'import android.webkit.WebViewClient;',
-    'import androidx.appcompat.app.AppCompatActivity;',
-    '',
-    'public class MainActivity extends AppCompatActivity {',
-    '    private WebView webView;',
-    '',
-    '    @Override',
-    '    @SuppressLint("SetJavaScriptEnabled")',
-    '    protected void onCreate(Bundle savedInstanceState) {',
-    '        super.onCreate(savedInstanceState);',
-    '        webView = new WebView(this);',
-    '        setContentView(webView);',
-    '',
-    '        WebSettings settings = webView.getSettings();',
-    '        settings.setJavaScriptEnabled(true);',
-    '        settings.setDomStorageEnabled(true);',
-    '        settings.setLoadWithOverviewMode(true);',
-    '        settings.setUseWideViewPort(true);',
-    '        settings.setSupportZoom(false);',
-    '        settings.setBuiltInZoomControls(false);',
-    '        settings.setDisplayZoomControls(false);',
-    '        settings.setMediaPlaybackRequiresUserGesture(false);',
-    '        settings.setAllowFileAccess(false);',
-    '        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);',
-    '',
-    '        webView.setWebViewClient(new WebViewClient());',
-    '        webView.setWebChromeClient(new WebChromeClient());',
-    '        webView.loadUrl("' + safeUrl + '");',
-    '    }',
-    '',
-    '    @Override',
-    '    @SuppressWarnings("deprecation")',
-    '    public void onBackPressed() {',
-    '        if (webView != null && webView.canGoBack()) {',
-    '            webView.goBack();',
-    '        } else {',
-    '            super.onBackPressed();',
-    '        }',
-    '    }',
-    '',
-    '    @Override',
-    '    protected void onDestroy() {',
-    '        if (webView != null) {',
-    '            webView.destroy();',
-    '            webView = null;',
-    '        }',
-    '        super.onDestroy();',
-    '    }',
-    '}',
-  ].join('\n'),
-);
+    [
+      'package ' + pkg + ';',
+      '',
+      'import android.annotation.SuppressLint;',
+      'import android.os.Bundle;',
+      'import android.webkit.WebChromeClient;',
+      'import android.webkit.WebSettings;',
+      'import android.webkit.WebView;',
+      'import android.webkit.WebViewClient;',
+      'import androidx.appcompat.app.AppCompatActivity;',
+      '',
+      'public class MainActivity extends AppCompatActivity {',
+      '    private WebView webView;',
+      '',
+      '    @Override',
+      '    @SuppressLint("SetJavaScriptEnabled")',
+      '    protected void onCreate(Bundle savedInstanceState) {',
+      '        super.onCreate(savedInstanceState);',
+      '        webView = new WebView(this);',
+      '        setContentView(webView);',
+      '',
+      '        WebSettings settings = webView.getSettings();',
+      '        settings.setJavaScriptEnabled(true);',
+      '        settings.setDomStorageEnabled(true);',
+      '        settings.setLoadWithOverviewMode(true);',
+      '        settings.setUseWideViewPort(true);',
+      '        settings.setSupportZoom(false);',
+      '        settings.setBuiltInZoomControls(false);',
+      '        settings.setDisplayZoomControls(false);',
+      '        settings.setMediaPlaybackRequiresUserGesture(false);',
+      '        settings.setAllowFileAccess(false);',
+      '        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);',
+      '        settings.setCacheMode(WebSettings.LOAD_DEFAULT);',
+      '',
+      '        webView.setWebViewClient(new WebViewClient());',
+      '        webView.setWebChromeClient(new WebChromeClient());',
+      '        webView.loadUrl("' + safeUrl + '");',
+      '    }',
+      '',
+      '    @Override',
+      '    @SuppressWarnings("deprecation")',
+      '    public void onBackPressed() {',
+      '        if (webView != null && webView.canGoBack()) {',
+      '            webView.goBack();',
+      '        } else {',
+      '            super.onBackPressed();',
+      '        }',
+      '    }',
+      '',
+      '    @Override',
+      '    protected void onDestroy() {',
+      '        if (webView != null) {',
+      '            webView.destroy();',
+      '            webView = null;',
+      '        }',
+      '        super.onDestroy();',
+      '    }',
+      '}',
+    ].join('\n'),
+  );
 
   console.log(
-    'Android project generated for ' + pkg + ' v' + versionName + ' (' + versionCode + ') url=' + websiteUrl +
+    'Android project generated for ' +
+      pkg +
+      ' v' +
+      versionName +
+      ' (' +
+      versionCode +
+      ') url=' +
+      websiteUrl +
       (logoDownloaded ? ' icon=website-logo' : ' icon=vector-fallback'),
   );
 })().catch((e) => {
