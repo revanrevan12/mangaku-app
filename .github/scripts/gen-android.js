@@ -11,7 +11,9 @@ try {
 }
 
 const env = process.env;
-const appName = String(env.APP_NAME || cfg.app_name || 'Manga Reader').trim() || 'Manga Reader';
+// App name mirrors the website name exactly — no "Reader" suffix.
+const rawAppName = String(env.APP_NAME || cfg.app_name || cfg.site_name || 'Manga').trim();
+const appName = rawAppName.replace(/\s*Reader\s*$/i, '').trim() || 'Manga';
 let pkg = String(cfg.package_id || env.FALLBACK_PACKAGE || 'com.mangareader.app').trim();
 if (!/^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$/.test(pkg)) {
   console.warn('Invalid package_id, falling back to com.mangareader.app');
@@ -61,6 +63,10 @@ async function downloadLogoIcon() {
     const ct = String(r.headers.get('content-type') || '').toLowerCase();
     const buf = Buffer.from(await r.arrayBuffer());
     if (buf.length < 100) throw new Error('logo too small');
+    const MAX_LOGO_BYTES = 3 * 1024 * 1024;
+    if (buf.length > MAX_LOGO_BYTES) {
+      console.warn('Logo is ' + buf.length + ' bytes (> 3MB); using it as-is may bloat the APK.');
+    }
     // Accept PNG / JPEG / WEBP. SVG cannot be used directly as a raster launcher icon.
     const isRaster = ct.includes('png') || ct.includes('jpeg') || ct.includes('jpg') || ct.includes('webp') ||
       buf[0] === 0x89 && buf[1] === 0x50 || buf[0] === 0xff && buf[1] === 0xd8;
