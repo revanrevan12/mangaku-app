@@ -100,6 +100,141 @@ function writeVectorIcon() {
   );
 }
 
+const MIPMAP_BUCKETS = [
+  { dir: 'mipmap-ldpi', size: 36 },
+  { dir: 'mipmap-mdpi', size: 48 },
+  { dir: 'mipmap-hdpi', size: 72 },
+  { dir: 'mipmap-xhdpi', size: 96 },
+  { dir: 'mipmap-xxhdpi', size: 144 },
+  { dir: 'mipmap-xxxhdpi', size: 192 },
+];
+
+function isPngBuffer(buf) {
+  return (
+    Buffer.isBuffer(buf) &&
+    buf.length >= 24 &&
+    buf[0] === 0x89 &&
+    buf[1] === 0x50 &&
+    buf[2] === 0x4e &&
+    buf[3] === 0x47 &&
+    buf[4] === 0x0d &&
+    buf[5] === 0x0a &&
+    buf[6] === 0x1a &&
+    buf[7] === 0x0a
+  );
+}
+
+function readPngIhdr(buf) {
+  // PNG signature (8) + IHDR length(4) + type(4) + data…
+  if (!isPngBuffer(buf)) return null;
+  const type = buf.toString('ascii', 12, 16);
+  if (type !== 'IHDR') return null;
+  const width = buf.readUInt32BE(16);
+  const height = buf.readUInt32BE(20);
+  const bitDepth = buf[24];
+  const colorType = buf[25];
+  return { width, height, bitDepth, colorType };
+}
+
+/**
+ * Decode website logo from apk-icon.b64 and place launcher PNGs in every
+ * mipmap density bucket. Falls back to vector drawable on any failure.
+ * Returns icon resource ref: '@mipmap/ic_launcher' or '@drawable/ic_launcher'.
+ */
+function installLauncherIcon() {
+  const MAX_BYTES = 512 * 1024;
+  const MAX_DIM = 2048;
+
+  let pngBuf = null;
+  if (fs.existsSync('apk-icon.b64')) {
+    try {
+      const b64 = fs.readFileSync('apk-icon.b64', 'utf8').replace(/\s+/g, '');
+      if (b64.length > 0) {
+        pngBuf = Buffer.from(b64, 'base64');
+        console.log('apk-icon.b64 decoded to', pngBuf.length, 'bytes');
+      }
+    } catch (e) {
+      console.warn('apk-icon.b64 read/decode failed:', e.message);
+      pngBuf = null;
+    }
+  } else {
+    console.log('apk-icon.b64 not found — vector launcher fallback');
+  }
+
+  if (!pngBuf || !isPngBuffer(pngBuf)) {
+    if (pngBuf) console.warn('apk-icon.b64 is not a valid PNG — vector fallback');
+    writeVectorIcon();
+    return '@drawable/ic_launcher';
+  }
+
+  if (pngBuf.length > MAX_BYTES) {
+    console.warn(
+      'logo PNG too large (' + pngBuf.length + ' > ' + MAX_BYTES + ') — vector fallback',
+    );
+    writeVectorIcon();
+    return '@drawable/ic_launcher';
+  }
+
+  const ihdr = readPngIhdr(pngBuf);
+  if (!ihdr || !ihdr.width || !ihdr.height) {
+    console.warn('PNG IHDR unreadable — vector fallback');
+    writeVectorIcon();
+    return '@drawable/ic_launcher';
+  }
+  if (ihdr.width > MAX_DIM || ihdr.height > MAX_DIM) {
+    console.warn(
+      'PNG dimensions ' + ihdr.width + 'x' + ihdr.height + ' too large — vector fallback',
+    );
+    writeVectorIcon();
+    return '@drawable/ic_launcher';
+  }
+  // Reject exotic types that sometimes trip older aapt; allow 2/3/4/6 (gray, RGB, palette, RGBA)
+  if (![0, 2, 3, 4, 6].includes(ihdr.colorType)) {
+    console.warn('PNG colorType ' + ihdr.colorType + ' unsupported — vector fallback');
+    writeVectorIcon();
+    return '@drawable/ic_launcher';
+  }
+
+  // Same validated PNG in every density bucket. Android scales for the device;
+  // avoids needing a native image resizer inside the CI generator.
+  for (const bucket of MIPMAP_BUCKETS) {
+    const dir = path.join('app/src/main/res', bucket.dir);
+    fs.mkdirSync(dir, { recursive: true });
+    const out = path.join(dir, 'ic_launcher.png');
+    fs.writeFileSync(out, pngBuf);
+    // Verify magic still intact after write
+    const check = fs.readFileSync(out);
+    if (!isPngBuffer(check)) {
+      console.warn('mipmap write corrupt at', out, '— vector fallback');
+      try {
+        fs.rmSync('app/src/main/res/mipmap-ldpi', { recursive: true, force: true });
+        fs.rmSync('app/src/main/res/mipmap-mdpi', { recursive: true, force: true });
+        fs.rmSync('app/src/main/res/mipmap-hdpi', { recursive: true, force: true });
+        fs.rmSync('app/src/main/res/mipmap-xhdpi', { recursive: true, force: true });
+        fs.rmSync('app/src/main/res/mipmap-xxhdpi', { recursive: true, force: true });
+        fs.rmSync('app/src/main/res/mipmap-xxxhdpi', { recursive: true, force: true });
+      } catch {
+        /* ignore */
+      }
+      writeVectorIcon();
+      return '@drawable/ic_launcher';
+    }
+    console.log('wrote', out, '(' + check.length + ' bytes, src ' + ihdr.width + 'x' + ihdr.height + ')');
+  }
+
+  // Keep a drawable vector as secondary roundIcon fallback only if needed — not used when mipmap OK.
+  console.log(
+    'Launcher icon installed from website logo PNG (' +
+      ihdr.width +
+      'x' +
+      ihdr.height +
+      ', ' +
+      pngBuf.length +
+      ' bytes) → @mipmap/ic_launcher',
+  );
+  return '@mipmap/ic_launcher';
+}
+
 (async () => {
   try {
     fs.rmSync('app', { recursive: true, force: true });
@@ -124,20 +259,6 @@ function writeVectorIcon() {
     fs.rmSync('gradle', { recursive: true, force: true });
   } catch {
     /* ignore */
-  }
-
-  // Always use vector launcher — PNG website logos frequently break AAPT2 on CI.
-  if (fs.existsSync('apk-icon.b64')) {
-    try {
-      const b64 = fs.readFileSync('apk-icon.b64', 'utf8').replace(/\s+/g, '');
-      console.log(
-        'apk-icon.b64 present (' +
-          Buffer.from(b64, 'base64').length +
-          ' bytes) — skipping PNG, using vector launcher.',
-      );
-    } catch {
-      /* ignore */
-    }
   }
 
   writeText(
@@ -268,7 +389,9 @@ function writeVectorIcon() {
     '# WebView\n-keepclassmembers class * {\n    @android.webkit.JavascriptInterface <methods>;\n}\n',
   );
 
-  const iconRef = '@drawable/ic_launcher';
+  // Install website logo (apk-icon.b64 → mipmap PNG) before writing the manifest
+  // so android:icon / android:roundIcon point at the real launcher asset.
+  const iconRef = installLauncherIcon();
 
   writeText(
     'app/src/main/AndroidManifest.xml',
@@ -367,8 +490,6 @@ function writeVectorIcon() {
     ].join('\n'),
   );
 
-  writeVectorIcon();
-
   writeText(
     'app/src/main/java/' + pkgPath + '/MainActivity.java',
     [
@@ -466,14 +587,28 @@ function writeVectorIcon() {
       process.exit(1);
     }
   }
-  const hasIcon =
-    fs.existsSync('app/src/main/res/mipmap-hdpi/ic_launcher.png') ||
-    fs.existsSync('app/src/main/res/drawable/ic_launcher.xml');
-  if (!hasIcon) {
+  const hasMipmap = fs.existsSync('app/src/main/res/mipmap-hdpi/ic_launcher.png');
+  const hasVector = fs.existsSync('app/src/main/res/drawable/ic_launcher.xml');
+  if (!hasMipmap && !hasVector) {
     console.warn('No icon found — writing emergency vector');
     writeVectorIcon();
   }
+  // Manifest must match installed assets
+  const manifestPath = 'app/src/main/AndroidManifest.xml';
+  let manifestBody = fs.readFileSync(manifestPath, 'utf8');
+  if (hasMipmap) {
+    manifestBody = manifestBody
+      .replace(/android:icon="[^"]*"/g, 'android:icon="@mipmap/ic_launcher"')
+      .replace(/android:roundIcon="[^"]*"/g, 'android:roundIcon="@mipmap/ic_launcher"');
+    fs.writeFileSync(manifestPath, manifestBody.endsWith('\n') ? manifestBody : manifestBody + '\n', 'utf8');
+  } else if (hasVector || fs.existsSync('app/src/main/res/drawable/ic_launcher.xml')) {
+    manifestBody = manifestBody
+      .replace(/android:icon="[^"]*"/g, 'android:icon="@drawable/ic_launcher"')
+      .replace(/android:roundIcon="[^"]*"/g, 'android:roundIcon="@drawable/ic_launcher"');
+    fs.writeFileSync(manifestPath, manifestBody.endsWith('\n') ? manifestBody : manifestBody + '\n', 'utf8');
+  }
 
+  const iconMode = hasMipmap ? 'mipmap-png' : 'vector';
   console.log(
     'Android project generated for ' +
       pkg +
@@ -483,7 +618,8 @@ function writeVectorIcon() {
       versionCode +
       ') url=' +
       websiteUrl +
-      ' icon=vector' +
+      ' icon=' +
+      iconMode +
       ' agp=' +
       AGP_VERSION +
       ' gradle=' +
