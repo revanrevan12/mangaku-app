@@ -10,11 +10,11 @@ on:
       version_name:
         description: 'Version name (mis. 1.0.0)'
         required: false
-        default: '1.2.24'
+        default: '1.2.25'
       version_code:
         description: 'Version code (angka)'
         required: false
-        default: '147'
+        default: '148'
       website_url:
         description: 'URL website yang dibungkus WebView'
         required: false
@@ -26,7 +26,7 @@ on:
       release_tag:
         description: 'Tag GitHub Release'
         required: false
-        default: 'v1.2.24-manual'
+        default: 'v1.2.25-manual'
 
 permissions:
   contents: write
