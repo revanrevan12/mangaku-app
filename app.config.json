@@ -2,8 +2,8 @@
   "app": {
     "name": "Manga Reader",
     "package_id": "com.mangareader.app",
-    "version_name": "1.2.9",
-    "version_code": 127,
+    "version_name": "1.2.5",
+    "version_code": 125,
     "min_sdk": 21,
     "target_sdk": 34,
     "architecture": "armv7_arm64",
@@ -17,9 +17,9 @@
     "logo_url": ""
   },
   "api": {
-    "endpoint": "8e72783a-c5b0-4605-b01a-89434796e075.app-preview.com",
-    "manga_base": "8e72783a-c5b0-4605-b01a-89434796e075.app-preview.com/hcgi/api/manga",
-    "pocketbase": "8e72783a-c5b0-4605-b01a-89434796e075.app-preview.com"
+    "endpoint": "mangany.site",
+    "manga_base": "mangany.site/hcgi/api/manga",
+    "pocketbase": "mangany.site"
   },
-  "built_at": "2026-08-14T07:53:10.250Z"
+  "built_at": "2026-08-14T08:13:17.472Z"
 }
