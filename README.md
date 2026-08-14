@@ -1,9 +1,9 @@
 # Manga Reader
 
-Android WebView shell for [8e72783a-c5b0-4605-b01a-89434796e075.app-preview.com](8e72783a-c5b0-4605-b01a-89434796e075.app-preview.com).
+Android WebView shell for [mangany.site](mangany.site).
 
 - Package: `com.mangareader.app`
-- Version: 1.2.9 (build 127)
+- Version: 1.2.5 (build 125)
 - minSdk 21 · targetSdk 34
 
 ## Build
