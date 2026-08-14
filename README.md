@@ -3,7 +3,7 @@
 Android WebView shell for [mangany.site](mangany.site).
 
 - Package: `com.mangareader.app`
-- Version: 1.2.5 (build 125)
+- Version: 1.2.5 (build 126)
 - minSdk 21 · targetSdk 34
 
 ## Build
