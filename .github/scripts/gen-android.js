@@ -250,7 +250,9 @@ function writeVectorIcon() {
     [
       'org.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8 -XX:MaxMetaspaceSize=512m',
       'org.gradle.parallel=false',
-      'org.gradle.caching=true',
+      '# Build cache disabled — GHA cache save was failing with path errors',
+      'org.gradle.caching=false',
+      'org.gradle.configuration-cache=false',
       'org.gradle.configureondemand=false',
       'org.gradle.daemon=false',
       'org.gradle.workers.max=1',
