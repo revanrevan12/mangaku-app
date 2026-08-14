@@ -10,11 +10,11 @@ on:
       version_name:
         description: 'Version name (mis. 1.0.0)'
         required: false
-        default: '1.2.28'
+        default: '1.2.29'
       version_code:
         description: 'Version code (angka)'
         required: false
-        default: '151'
+        default: '152'
       website_url:
         description: 'URL website yang dibungkus WebView'
         required: false
@@ -26,7 +26,7 @@ on:
       release_tag:
         description: 'Tag GitHub Release'
         required: false
-        default: 'v1.2.28-manual'
+        default: 'v1.2.29-manual'
 
 permissions:
   contents: write
@@ -184,16 +184,6 @@ jobs:
           echo "/opt/gradle-${GRADLE_VER}/bin" >> "$GITHUB_PATH"
           export PATH="/opt/gradle-${GRADLE_VER}/bin:$PATH"
           gradle --version
-
-      - name: Generate debug keystore
-        run: |
-          set -euo pipefail
-          mkdir -p "$HOME/.config/.android"
-
-          keytool -genkeypair             -v             -keystore "$HOME/.config/.android/debug.keystore"             -storepass android             -alias androiddebugkey             -keypass android             -keyalg RSA             -keysize 2048             -validity 10000             -dname "CN=Android Debug,O=Android,C=US"
-
-          test -f "$HOME/.config/.android/debug.keystore"
-          ls -lh "$HOME/.config/.android/debug.keystore"
 
       - name: Build release APK
         run: |
