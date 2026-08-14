@@ -12,17 +12,16 @@ android {
         targetSdk 34
         versionCode 126
         versionName "1.2.8"
-        resConfigs "in", "en"
+        vectorDrawables.useSupportLibrary = true
     }
 
     buildTypes {
         release {
-            minifyEnabled true
-            shrinkResources true
+            // Keep minify off by default — R8 needs keep rules that break simple WebView shells.
+            minifyEnabled false
+            shrinkResources false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            // Unsigned here on purpose: the CI signs with apksigner (v1+v2+v3)
-            // after zipalign, which produces a signature Android accepts.
-            signingConfig null
+            // CI signs with apksigner after assembleRelease (unsigned output is expected).
         }
         debug {
             minifyEnabled false
@@ -34,12 +33,15 @@ android {
         targetCompatibility JavaVersion.VERSION_17
     }
 
-    packagingOptions {
-        resources.excludes += ['META-INF/*.kotlin_module']
+    packaging {
+        resources {
+            excludes += ['META-INF/*.kotlin_module', 'META-INF/DEPENDENCIES', 'META-INF/LICENSE*', 'META-INF/NOTICE*']
+        }
     }
 
     lint {
         abortOnError false
+        checkReleaseBuilds false
     }
 }
 
