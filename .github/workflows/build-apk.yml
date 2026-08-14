@@ -87,6 +87,15 @@ jobs:
           fi
           echo "::notice::unsigned APK: $RAW ($(stat -c%s "$RAW") bytes)"
 
+      - name: List APK outputs (debug)
+        if: always()
+        run: |
+          set -euo pipefail
+          echo "::group::APK files produced by gradle"
+          find app/build/outputs -type f -name '*.apk' -printf '%p  %s bytes\n' 2>/dev/null || echo "no apk found under app/build/outputs"
+          ls -lhR app/build/outputs/apk 2>/dev/null || true
+          echo "::endgroup::"
+
       - name: Prepare keystore
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -220,7 +229,7 @@ jobs:
           echo "::notice::publishing $(basename "$APK_PATH") ($APK_SIZE bytes) to release $TAG"
 
           ASSETS=("$APK_PATH")
-          [ -f "$SRC_PATH" ] && ASSETS+=("$SRC_PATH")
+          if [ -f "$SRC_PATH" ]; then ASSETS+=("$SRC_PATH"); fi
 
           # 1. Ensure the release exists (created WITHOUT assets so upload is a separate, retryable step).
           if ! gh release view "$TAG" >/dev/null 2>&1; then
@@ -233,12 +242,29 @@ jobs:
           }
 
           # 2. Upload assets with retries, then verify the APK is actually listed.
+          RELEASE_ID="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq .id)"
+          echo "::notice::release id $RELEASE_ID for $TAG"
           for attempt in 1 2 3; do
+            echo "::group::asset upload attempt $attempt"
             if gh release upload "$TAG" "${ASSETS[@]}" --clobber; then
               echo "::notice::asset upload attempt $attempt succeeded"
             else
-              echo "::warning::asset upload attempt $attempt failed"
+              echo "::warning::gh release upload failed — trying direct uploads API"
+              APK_NAME="$(basename "$APK_PATH")"
+              # Remove a partial asset with the same name, then POST raw bytes.
+              EXISTING="$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets" --jq ".[] | select(.name==\"$APK_NAME\") | .id" || true)"
+              for aid in $EXISTING; do gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$aid" || true; done
+              curl -sS -L -o upload.json -w '%{http_code}\n' \
+                -X POST \
+                -H "Authorization: Bearer $GH_TOKEN" \
+                -H "Accept: application/vnd.github+json" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                -H "Content-Type: application/vnd.android.package-archive" \
+                --data-binary "@$APK_PATH" \
+                "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?name=$APK_NAME" || true
+              head -c 400 upload.json || true; echo
             fi
+            echo "::endgroup::"
             APK_NAME="$(basename "$APK_PATH")"
             gh release view "$TAG" --json assets --jq '.assets[].name' > assets.txt 2>/dev/null || true
             echo "Assets currently on $TAG:"; cat assets.txt || true
