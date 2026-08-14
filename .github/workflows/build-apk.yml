@@ -40,6 +40,8 @@ jobs:
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
 
       - name: Read app config
         run: |
@@ -53,17 +55,37 @@ jobs:
       - name: Verify project layout
         run: |
           set -euo pipefail
-          for f in settings.gradle build.gradle app/build.gradle app/src/main/AndroidManifest.xml; do
+          for f in settings.gradle build.gradle app/build.gradle app/src/main/AndroidManifest.xml app/src/main/res/drawable/ic_launcher_legacy.xml; do
             test -f "$f" || { echo "::error::missing $f — push the app source from the website admin first"; exit 1; }
           done
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          ls "$ANDROID_HOME/build-tools"
+          echo "ANDROID_HOME=${ANDROID_HOME:-}"
+          echo "JAVA_HOME=${JAVA_HOME:-}"
+          java -version
+          ls "$ANDROID_HOME/build-tools" || true
+          find app/src -type f | head -50
 
       - name: Resolve dependencies
-        run: gradle --no-daemon :app:dependencies --configuration releaseRuntimeClasspath > deps.txt || { echo "::error::dependency resolution failed"; tail -40 deps.txt; exit 1; }
+        run: |
+          set -euo pipefail
+          if ! gradle --no-daemon :app:dependencies --configuration releaseRuntimeClasspath > deps.txt 2>&1; then
+            echo "::error::dependency resolution failed"
+            tail -80 deps.txt || true
+            exit 1
+          fi
+          echo "::notice::dependencies resolved"
+          tail -20 deps.txt
 
       - name: Build release APK (unsigned)
-        run: gradle --no-daemon :app:assembleRelease --stacktrace
+        run: |
+          set -euo pipefail
+          gradle --no-daemon :app:assembleRelease --stacktrace --info 2>&1 | tee build.log
+          RAW="$(find app/build/outputs/apk -name '*.apk' 2>/dev/null | head -n 1 || true)"
+          if [ -z "$RAW" ]; then
+            echo "::error::assembleRelease produced no APK — last 80 log lines:"
+            tail -80 build.log || true
+            exit 1
+          fi
+          echo "::notice::unsigned APK: $RAW ($(stat -c%s "$RAW") bytes)"
 
       - name: Prepare keystore
         env:
@@ -77,19 +99,28 @@ jobs:
           ALIAS="${KEY_ALIAS:-appkey}"
           KEY_PASS="${KEY_PASSWORD:-$STORE_PASS}"
           if [ -n "${KEYSTORE_BASE64:-}" ]; then
-            echo "$KEYSTORE_BASE64" | base64 -d > release.jks
-            echo "::notice::using KEYSTORE_BASE64 secret"
+            echo "$KEYSTORE_BASE64" | base64 -d > release.keystore
+            echo "::notice::using KEYSTORE_BASE64 secret ($(stat -c%s release.keystore) bytes)"
           else
-            echo "::warning::KEYSTORE_BASE64 not set — generating a build keystore (APK installs fine, but store the keystore for future updates)"
-            keytool -genkeypair -v -keystore release.jks -alias "$ALIAS" \
+            echo "::warning::KEYSTORE_BASE64 not set — generating a build keystore with keytool"
+            keytool -genkeypair -v -storetype PKCS12 -keystore release.keystore -alias "$ALIAS" \
               -keyalg RSA -keysize 2048 -validity 10000 \
               -storepass "$STORE_PASS" -keypass "$KEY_PASS" \
               -dname "CN=${APP_NAME:-App}, OU=Mobile, O=${PKG:-app}, C=ID"
           fi
-          keytool -list -keystore release.jks -storepass "$STORE_PASS" > /dev/null \
-            || { echo "::error::keystore invalid or wrong KEYSTORE_PASSWORD"; exit 1; }
-          keytool -list -keystore release.jks -storepass "$STORE_PASS" -alias "$ALIAS" > /dev/null \
-            || { echo "::error::alias '$ALIAS' not found in keystore (check KEY_ALIAS)"; exit 1; }
+          if ! keytool -list -keystore release.keystore -storepass "$STORE_PASS" > ks.list 2>/dev/null; then
+            keytool -list -storetype PKCS12 -keystore release.keystore -storepass "$STORE_PASS" > ks.list \
+              || { echo "::error::keystore invalid or wrong KEYSTORE_PASSWORD"; exit 1; }
+            echo "STORE_TYPE=PKCS12" >> $GITHUB_ENV
+          else
+            echo "STORE_TYPE=AUTO" >> $GITHUB_ENV
+          fi
+          cat ks.list
+          if ! grep -qi "$ALIAS" ks.list; then
+            keytool -list -keystore release.keystore -storepass "$STORE_PASS" -alias "$ALIAS" > /dev/null 2>&1 \
+              || keytool -list -storetype PKCS12 -keystore release.keystore -storepass "$STORE_PASS" -alias "$ALIAS" > /dev/null 2>&1 \
+              || { echo "::error::alias '$ALIAS' not found in keystore (check KEY_ALIAS). Contents:"; cat ks.list; exit 1; }
+          fi
           echo "STORE_PASS=$STORE_PASS" >> $GITHUB_ENV
           echo "ALIAS=$ALIAS" >> $GITHUB_ENV
           echo "KEY_PASS=$KEY_PASS" >> $GITHUB_ENV
@@ -100,22 +131,31 @@ jobs:
           set -euo pipefail
           BT="$(ls -1 "$ANDROID_HOME/build-tools" | sort -V | tail -n 1)"
           TOOLS="$ANDROID_HOME/build-tools/$BT"
-          RAW="$(find app/build/outputs/apk/release -name '*.apk' | head -n 1)"
+          RAW="$(find app/build/outputs/apk -name '*.apk' | head -n 1)"
           test -n "$RAW" || { echo "::error::gradle produced no APK"; exit 1; }
           mkdir -p dist
           SAFE_NAME="${APP_NAME// /-}"
           OUT="dist/${SAFE_NAME}-${VERSION_NAME}-${VERSION_CODE}.apk"
           "$TOOLS/zipalign" -p -f 4 "$RAW" aligned.apk
-          "$TOOLS/apksigner" sign \
-            --ks release.jks --ks-pass "pass:$STORE_PASS" \
-            --ks-key-alias "$ALIAS" --key-pass "pass:$KEY_PASS" \
-            --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true \
-            --out "$OUT" aligned.apk
+          if [ "${STORE_TYPE:-AUTO}" = "PKCS12" ]; then
+            "$TOOLS/apksigner" sign \
+              --ks release.keystore --ks-type PKCS12 \
+              --ks-pass "pass:$STORE_PASS" --ks-key-alias "$ALIAS" --key-pass "pass:$KEY_PASS" \
+              --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true \
+              --out "$OUT" aligned.apk
+          else
+            "$TOOLS/apksigner" sign \
+              --ks release.keystore \
+              --ks-pass "pass:$STORE_PASS" --ks-key-alias "$ALIAS" --key-pass "pass:$KEY_PASS" \
+              --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true \
+              --out "$OUT" aligned.apk
+          fi
           "$TOOLS/apksigner" verify --verbose --print-certs "$OUT" \
             || { echo "::error::APK signature verification failed"; exit 1; }
           "$TOOLS/zipalign" -c -v 4 "$OUT" > /dev/null \
             || { echo "::error::APK is not zipaligned"; exit 1; }
           echo "apk_path=$OUT" >> $GITHUB_OUTPUT
+          echo "::notice::signed APK $OUT ($(stat -c%s "$OUT") bytes)"
 
       - name: Validate APK contents
         env:
@@ -132,7 +172,7 @@ jobs:
           for entry in AndroidManifest.xml classes.dex resources.arsc; do
             echo "$LIST" | grep -qx "$entry" || { echo "::error::missing $entry in APK"; exit 1; }
           done
-          echo "$LIST" | grep -q '^META-INF/.*\.\(RSA\|DSA\|EC\)$' || echo "::warning::no v1 signature block (v2/v3 still valid on Android 7+)"
+          echo "$LIST" | grep -Eq '^META-INF/.*\.(RSA|DSA|EC)$' || echo "::warning::no v1 signature block (v2/v3 still valid on Android 7+)"
           echo "$LIST" | grep -q '^res/' || { echo "::error::no res/ resources in APK"; exit 1; }
           "$AAPT2" dump packagename "$APK" || { echo "::error::aapt2 cannot read the manifest"; exit 1; }
           FOUND_PKG="$("$AAPT2" dump packagename "$APK" | tr -d '\r\n')"
