@@ -10,19 +10,23 @@ on:
       version_name:
         description: 'Version name (mis. 1.0.0)'
         required: false
-        default: '1.2.4'
+        default: '1.2.5'
       version_code:
         description: 'Version code (angka)'
         required: false
-        default: '127'
+        default: '126'
       website_url:
         description: 'URL website yang dibungkus WebView'
+        required: false
+        default: ''
+      logo_url:
+        description: 'URL logo website (PNG/JPG) untuk app icon'
         required: false
         default: ''
       release_tag:
         description: 'Tag GitHub Release'
         required: false
-        default: 'v1.2.4-manual'
+        default: 'v1.2.5-manual'
 
 permissions:
   contents: write
@@ -62,6 +66,7 @@ jobs:
           VERSION_NAME: ${{ github.event.inputs.version_name }}
           VERSION_CODE: ${{ github.event.inputs.version_code }}
           WEBSITE_URL: ${{ github.event.inputs.website_url }}
+          LOGO_URL: ${{ github.event.inputs.logo_url }}
           FALLBACK_PACKAGE: 'com.mangareader.app'
 
       - name: Validate generated project
@@ -74,7 +79,7 @@ jobs:
           test -f app/src/main/res/values/strings.xml
           test -f app/src/main/res/values/colors.xml
           test -f app/src/main/res/values/themes.xml
-          test -f app/src/main/res/drawable/ic_launcher.xml
+          test -f app/src/main/res/drawable/ic_launcher.xml || test -f app/src/main/res/drawable-nodpi/ic_launcher.png
           find app/src/main -type f | sort
           echo "Project structure OK"
 
