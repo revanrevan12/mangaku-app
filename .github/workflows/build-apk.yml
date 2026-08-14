@@ -10,11 +10,11 @@ on:
       version_name:
         description: 'Version name (mis. 1.0.0)'
         required: false
-        default: '1.2.33'
+        default: '1.2.34'
       version_code:
         description: 'Version code (angka)'
         required: false
-        default: '156'
+        default: '157'
       website_url:
         description: 'URL website yang dibungkus WebView'
         required: false
@@ -26,7 +26,7 @@ on:
       release_tag:
         description: 'Tag GitHub Release'
         required: false
-        default: 'v1.2.33-manual'
+        default: 'v1.2.34-manual'
 
 permissions:
   contents: write
@@ -38,18 +38,17 @@ concurrency:
 env:
   GRADLE_OPTS: >-
     -Dorg.gradle.daemon=false
-    -Dorg.gradle.parallel=false
-    -Dorg.gradle.workers.max=1
-    -Dorg.gradle.caching=false
+    -Dorg.gradle.parallel=true
+    -Dorg.gradle.caching=true
     -Dorg.gradle.configuration-cache=false
     -Dfile.encoding=UTF-8
-  JAVA_TOOL_OPTIONS: -Xmx1536m
+  JAVA_TOOL_OPTIONS: -Xmx2048m
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -204,12 +203,11 @@ jobs:
           test -f gradle/wrapper/gradle-wrapper.properties
 
           {
-            echo 'org.gradle.caching=false'
+            echo 'org.gradle.caching=true'
             echo 'org.gradle.configuration-cache=false'
             echo 'org.gradle.daemon=false'
-            echo 'org.gradle.parallel=false'
-            echo 'org.gradle.workers.max=1'
-            echo 'org.gradle.jvmargs=-Xmx1536m -Dfile.encoding=UTF-8 -XX:MaxMetaspaceSize=384m'
+            echo 'org.gradle.parallel=true'
+            echo 'org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8 -XX:MaxMetaspaceSize=512m'
             echo 'android.useAndroidX=true'
             echo 'android.nonTransitiveRClass=true'
           } > gradle.properties
@@ -237,11 +235,8 @@ jobs:
             set +e
             ./gradlew "$@" \
               --no-daemon \
-              --no-parallel \
-              --no-build-cache \
-              --max-workers=1 \
               --stacktrace \
-              --info \
+              --console=plain \
               2>&1 | tee "/tmp/gradle-${label}.log"
             local rc=${PIPESTATUS[0]}
             set -e
