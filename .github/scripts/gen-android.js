@@ -12,7 +12,10 @@ try {
 
 const env = process.env;
 // App name = website name exactly (no Reader/App/Application suffix).
-const rawAppName = String(env.APP_NAME || cfg.app_name || cfg.site_name || 'Manga').trim();
+const nameCandidates = [env.APP_NAME, cfg.app_name, cfg.site_name]
+  .map((v) => String(v || '').trim())
+  .filter((v) => v && !/^(app|application|android|manga)$/i.test(v));
+const rawAppName = nameCandidates[0] || String(cfg.site_name || cfg.app_name || 'Manga').trim();
 const appName =
   rawAppName
     .replace(/\s*(Reader|App|Application|Android)\s*$/i, '')
@@ -58,7 +61,26 @@ const safeUrl = appUrl.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 
 // ——— App icon: prefer the website logo (PNG/JPG), else a vector fallback ———
 let logoDownloaded = false;
+function localLogoIcon() {
+  // Preferred path: the server committed the website logo as base64 (apk-icon.b64)
+  // because PocketBase file URLs are not reachable from GitHub runners.
+  try {
+    if (!fs.existsSync('apk-icon.b64')) return false;
+    const b64 = fs.readFileSync('apk-icon.b64', 'utf8').replace(/\s+/g, '');
+    if (b64.length < 100) return false;
+    const buf = Buffer.from(b64, 'base64');
+    if (buf.length < 100) return false;
+    write('app/src/main/res/drawable-nodpi/ic_launcher.png', buf);
+    console.log('App icon set from committed website logo (' + buf.length + ' bytes).');
+    return true;
+  } catch (e) {
+    console.warn('Local icon decode failed:', e.message);
+    return false;
+  }
+}
+
 async function downloadLogoIcon() {
+  if (localLogoIcon()) return true;
   if (!logoUrl) return false;
   try {
     console.log('Downloading app icon from', logoUrl);
