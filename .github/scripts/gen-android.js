@@ -33,7 +33,24 @@ const versionName = String(env.VERSION_NAME || cfg.version_name || '1.0.0')
   .replace(/"/g, '')
   .replace(/[^\w.-]/g, '');
 const versionCode = Math.max(1, parseInt(env.VERSION_CODE || cfg.version_code || '1', 10) || 1);
-const websiteUrl = String(env.WEBSITE_URL || cfg.website_url || 'https://example.com').trim();
+// Standalone APK: never wrap an ephemeral Horizons preview URL — those expire
+// with the preview session and leave the installed app on a blank screen. The
+// stable production domain serves both the web app and its API at the same
+// origin, so every feature keeps working inside the WebView.
+const PRODUCTION_DOMAIN = 'https://mangany.site';
+function isPreviewUrl(u) {
+  const s = String(u || '').toLowerCase();
+  return (
+    s.includes('app-preview.com') ||
+    s.includes('app-preview.') ||
+    s.includes('horizons') ||
+    !s ||
+    /^[a-z0-9]{8}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{12}\./i.test(s) ||
+    s.includes('example.com')
+  );
+}
+const rawWebsiteUrl = String(env.WEBSITE_URL || cfg.website_url || '').trim();
+const websiteUrl = isPreviewUrl(rawWebsiteUrl) ? PRODUCTION_DOMAIN : rawWebsiteUrl.replace(/\/+$/, '');
 let color = String(cfg.primary_color || '#E23636').trim();
 if (!/^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/.test(color)) {
   color = '#E23636';
